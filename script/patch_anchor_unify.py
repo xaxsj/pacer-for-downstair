@@ -95,6 +95,24 @@ EDITS = [
 MARK = "_anchored_time"
 
 
+def _read_normalized(path):
+    """Read as UTF-8, normalise CRLF -> LF, and report whether the file used CRLF.
+
+    Matching on LF-only text keeps the OLD/NEW literals simple; the original
+    line endings are restored on write so the diff stays minimal.
+    """
+    raw = open(path, "rb").read().decode("utf-8")
+    crlf = "\r\n" in raw
+    return raw.replace("\r\n", "\n"), crlf
+
+
+def _write_restored(path, text, crlf):
+    if crlf:
+        text = text.replace("\n", "\r\n")
+    with open(path, "wb") as fh:
+        fh.write(text.encode("utf-8"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
@@ -107,22 +125,25 @@ def main() -> int:
             print("not found: %s (run from repo root)" % f)
             return 1
 
-    traj_src = open(TRAJ, encoding="utf-8").read()
+    traj_src, traj_crlf = _read_normalized(TRAJ)
+    terr_src, terr_crlf = _read_normalized(TERR)
+    crlf = {TRAJ: traj_crlf, TERR: terr_crlf}
     done = "def _anchored_time" in traj_src
 
     if a.status or not (a.apply or a.revert):
         print("applied: %s" % ("YES" if done else "no"))
         for f in (TRAJ, TERR):
             print("  backup %-50s %s" % (f + ".orig", "yes" if os.path.exists(f + ".orig") else "no"))
-        terr_src = open(TERR, encoding="utf-8").read()
         print("  remaining raw tar_pos(time): %d" % terr_src.count("calc_pos(env_ids, time)"))
+        print("  line endings: traj=%s terr=%s" % (
+            "CRLF" if traj_crlf else "LF", "CRLF" if terr_crlf else "LF"))
         return 0
 
     if a.apply:
         if done:
             print("already applied")
             return 0
-        srcs = {TRAJ: traj_src, TERR: open(TERR, encoding="utf-8").read()}
+        srcs = {TRAJ: traj_src, TERR: terr_src}
         for f, old, new in EDITS:
             n = srcs[f].count(old)
             if n != 1:
@@ -133,7 +154,7 @@ def main() -> int:
             if not os.path.exists(f + ".orig"):
                 shutil.copy2(f, f + ".orig")
                 print("backup -> %s.orig" % f)
-            open(f, "w", encoding="utf-8", newline="\n").write(srcs[f])
+            _write_restored(f, srcs[f], crlf[f])
         print("applied: unified character-anchored time (default=char)")
         return 0
 
