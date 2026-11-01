@@ -18,7 +18,8 @@ env:
   has_mesh: False
   has_jt_limit: False
   has_dof_subset: True
-  has_upright_start: False
+  has_upright_start: True      # MUST be True: False puts the body flat in physics
+                               # while observations look upright (see docs/根因-has_upright_start.md)
   has_smpl_pd_offset: False
   remove_toe: False
   real_weight_porpotion: True
