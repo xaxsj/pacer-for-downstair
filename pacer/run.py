@@ -203,6 +203,10 @@ def main():
 
     flags.add_proj = args.add_proj
 
+    # TERRA: 固定路径（--path_file <json>）；为空时沿用程序化随机轨迹
+    flags.path_file = getattr(args, "path_file", "") or ""
+    flags.verbose_path = True
+
     if args.server_mode:
 
         flags.follow = args.follow = True

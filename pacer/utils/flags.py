@@ -7,5 +7,7 @@ class Flags(object):
 
 flags = Flags({
     'test': False, 
-    'debug': False
+    'debug': False,
+    # 固定路径（世界坐标 JSON）。非空时 TrajGenerator 用它替代程序化随机轨迹。
+    'path_file': '',
     })

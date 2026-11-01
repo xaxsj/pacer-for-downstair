@@ -96,6 +96,25 @@ class TrajGenerator():
                 traj[..., 0:2] = traj[..., 0:2] - (traj[..., 0, 0:2] - init_pos[..., 0:2])[:, None]
                 self._verts[env_ids] = traj
 
+            ####### TERRA: 固定路径（按弧长等距重采样）#######
+            # --path_file <json>：用给定的折线替代上面的随机/固定直线轨迹。
+            # 等距重采样是必需的：calc_pos 按时间线性推进顶点索引，
+            # 只有等距折线才对应恒定速度。
+            path_file = getattr(flags, "path_file", "")
+            if path_file:
+                from pacer.env.util.fixed_path import apply_to_verts
+
+                polyline = apply_to_verts(self._verts, env_ids, init_pos, path_file)
+                if getattr(flags, "verbose_path", False):
+                    print(
+                        "[fixed_path] {} -> {} verts, length {:.2f} m, step {:.4f} m".format(
+                            path_file,
+                            len(polyline),
+                            float(np.linalg.norm(np.diff(polyline, axis=0), axis=1).sum()),
+                            float(np.linalg.norm(np.diff(polyline, axis=0), axis=1).mean()),
+                        )
+                    )
+
         return
 
     def input_new_trajs(self, env_ids):

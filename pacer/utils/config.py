@@ -409,6 +409,12 @@ def get_args(benchmark=False):
             "help": "load real data mesh"
         },
         {
+            "name": "--path_file",
+            "type": str,
+            "default": "",
+            "help": "JSON file with a fixed 2D path [[x,y,z], ...]; replaces the procedural trajectory"
+        },
+        {
             "name": "--server_mode",
             "action": "store_true",
             "default": False,

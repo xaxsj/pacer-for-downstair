@@ -142,3 +142,7 @@ demo_vis
 demo*
 *.pkl
 new_trials
+
+# Fixed-path JSON: the "*.json" and "data/*" rules above would ignore it.
+!data/paths/
+!data/paths/stairs20.json
