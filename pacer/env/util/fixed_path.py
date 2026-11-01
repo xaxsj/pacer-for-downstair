@@ -82,6 +82,7 @@ def apply_to_verts(
     env_ids: torch.Tensor,
     init_pos: torch.Tensor,
     path_file: str | Path,
+    yaw_deg: float = 0.0,
 ) -> np.ndarray:
     """把固定路径写入 ``verts[env_ids]``，并把首个顶点对齐到角色当前根位置（仅 XY）。
 
@@ -96,6 +97,15 @@ def apply_to_verts(
     """
     num_verts = verts.shape[1]
     resampled = resample_uniform(load_path(path_file), num_verts)
+
+    # 可选：绕起点在 XY 平面内预旋转（用于补偿坐标约定差，例如 90 度）
+    if abs(yaw_deg) > 1e-9:
+        theta = np.deg2rad(yaw_deg)
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
+        rel = resampled - resampled[0]
+        rot_x = rel[:, 0] * cos_t - rel[:, 1] * sin_t
+        rot_y = rel[:, 0] * sin_t + rel[:, 1] * cos_t
+        resampled = np.stack([rot_x, rot_y, rel[:, 2]], axis=-1) + resampled[0]
 
     base = init_pos if torch.is_tensor(init_pos) else torch.as_tensor(init_pos)
     base = base[..., :3].to(device=verts.device, dtype=verts.dtype)

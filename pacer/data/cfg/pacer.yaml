@@ -18,7 +18,7 @@ env:
   has_mesh: False
   has_jt_limit: False
   has_dof_subset: True
-  has_upright_start: True
+  has_upright_start: False
   has_smpl_pd_offset: False
   remove_toe: False
   real_weight_porpotion: True
@@ -38,7 +38,7 @@ env:
   pdControl: True
   powerScale: 1.0
   controlFrequencyInv: 2 # 30 Hz
-  stateInit: "Random"
+  stateInit: "Start"
   hybridInitProb: 0.5
   numAMPObsSteps: 10
   

@@ -78,8 +78,13 @@ def main() -> int:
 
     with open(args.states, "rb") as fh:
         data = pickle.load(fh)
-    root = np.asarray(data["root_states"])[:, args.env]        # (T,13)
-    dof = np.asarray(data["dof_pos"])[:, args.env]             # (T,D)
+    root = np.asarray(data["root_states"])
+    dof = np.asarray(data["dof_pos"])
+    # 兼容两种 dump 形状：(T,E,13)/(T,E,D) 与 (T,13)/(T,D)
+    if root.ndim == 3:
+        root = root[:, args.env]
+    if dof.ndim == 3:
+        dof = dof[:, args.env]
     T = root.shape[0] if args.frames <= 0 else min(args.frames, root.shape[0])
     print(f"[render_isaac] states={args.states} frames={T} dof={dof.shape[-1]}")
 
@@ -146,7 +151,7 @@ def main() -> int:
         root_t[actor_idx, 3:7] = to_torch(rp[3:7], root_t.device)  # w,x,y,z
         root_t[actor_idx, 7:13] = 0.0
 
-        n = min(int(dof.shape[-1]), dof_t.shape[-1] // 2)
+        n = min(int(dof.shape[-1]), dof_t.shape[0])  # dof_t is (num_dofs, 2)
         pos = to_torch(dof[i, :n], dof_t.device)
         dof_t[:, 0] = 0.0
         dof_t[:n, 0] = pos

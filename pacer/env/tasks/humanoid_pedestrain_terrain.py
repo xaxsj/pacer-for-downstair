@@ -476,23 +476,24 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
             rb_pos, rb_rot = None, None
 
 
-        # TERRA: also enter this block when a fixed start yaw is requested
+        # TERRA: rotate the initial pose by a fixed yaw (relative).
+        # NOTE: Isaac Gym stores quaternions as (x, y, z, w).
         if flags.random_heading or getattr(flags, "start_yaw", None) is not None:
             start_yaw = getattr(flags, "start_yaw", None)
             if start_yaw is not None:
-                # Absolute heading: cancel the current heading first, then apply the target.
-                cur_heading = torch_utils.calc_heading_quat(root_rot)
-                # scipy 的 as_quat() 返回 (x, y, z, w)，Isaac Gym 用 (w, x, y, z)
-                q_xyzw = sRot.from_euler(
-                    "z", [float(start_yaw)] * int(num_envs)).as_quat()
-                q_wxyz = q_xyzw[:, [3, 0, 1, 2]]
-                tgt = torch.from_numpy(q_wxyz).float().to(self.device)
-                random_heading_quat = quat_mul(tgt, torch_utils.quat_conjugate(cur_heading))
+                half = float(start_yaw) / 2.0
+                zero = torch.zeros(num_envs, device=self.device, dtype=root_rot.dtype)
+                cos_h = torch.full((num_envs,), float(np.cos(half)),
+                                   device=self.device, dtype=root_rot.dtype)
+                sin_h = torch.full((num_envs,), float(np.sin(half)),
+                                   device=self.device, dtype=root_rot.dtype)
+                random_heading_quat = torch.stack([zero, zero, sin_h, cos_h], dim=-1)
             else:
                 random_rot = np.zeros([num_envs, 3])
                 random_rot[:, 2] = np.pi * (2 * np.random.random([num_envs]) - 1.0)
+                q_xyzw = sRot.from_euler("xyz", random_rot).as_quat()
                 random_heading_quat = torch.from_numpy(
-                    sRot.from_euler("xyz", random_rot).as_quat()).float().to(self.device)
+                    q_xyzw).float().to(self.device)
             random_heading_quat_repeat = random_heading_quat[:, None].repeat(1, 24, 1)
             root_rot = quat_mul(random_heading_quat, root_rot).clone()
             # 绕根位置旋转刚体，然后把根位置加回去（原代码漏了这一步）
@@ -504,6 +505,12 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
                        + root_pos[:, None, :]).clone()
             rb_rot = quat_mul(random_heading_quat_repeat, rb_rot).clone()
             root_ang_vel = quat_apply(random_heading_quat, root_ang_vel).clone()
+            if getattr(flags, "verbose_path", False):
+                ex = torch_utils.my_quat_rotate(
+                    root_rot, torch.tensor([[1.0, 0.0, 0.0]], device=root_rot.device).repeat(root_rot.shape[0], 1))
+                import math as _m
+                _ang = float(_m.degrees(_m.atan2(ex[0, 1].item(), ex[0, 0].item())))
+                print(f"[start_yaw] requested={start_yaw} -> body+X heading = {_ang:.1f} deg")
 
             curr_heading = torch_utils.calc_heading_quat(root_rot)
             root_vel[:, 0] = torch.rand([num_envs]) * vel_range + vel_min

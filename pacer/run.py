@@ -210,6 +210,7 @@ def main():
     # TERRA: 固定路径（--path_file <json>）；为空时沿用程序化随机轨迹
     flags.path_file = getattr(args, "path_file", "") or ""
     flags.verbose_path = True
+    flags.path_yaw = float(getattr(args, "path_yaw", 0.0) or 0.0)
 
     # TERRA: 无窗口自动录制（导出状态供本地渲染）
     flags.auto_record = getattr(args, "auto_record", False)

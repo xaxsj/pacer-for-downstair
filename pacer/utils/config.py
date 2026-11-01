@@ -415,6 +415,12 @@ def get_args(benchmark=False):
             "help": "JSON file with a fixed 2D path [[x,y,z], ...]; replaces the procedural trajectory"
         },
         {
+            "name": "--path_yaw",
+            "type": float,
+            "default": 0.0,
+            "help": "rotate the fixed path by this many degrees (frame correction)"
+        },
+        {
             "name": "--auto_record",
             "action": "store_true",
             "default": False,

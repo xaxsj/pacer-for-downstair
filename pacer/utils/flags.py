@@ -10,6 +10,8 @@ flags = Flags({
     'debug': False,
     # 固定路径（世界坐标 JSON）。非空时 TrajGenerator 用它替代程序化随机轨迹。
     'path_file': '',
+    # path rotate
+    'path_yaw': 0.0,
     # 无窗口自动录制：跑 record_frames 步后把状态导成 pkl 并退出（供本地渲染）。
     'auto_record': False,
     'record_frames': 300,

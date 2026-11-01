@@ -104,7 +104,8 @@ class TrajGenerator():
             if path_file:
                 from pacer.env.util.fixed_path import apply_to_verts
 
-                polyline = apply_to_verts(self._verts, env_ids, init_pos, path_file)
+                polyline = apply_to_verts(self._verts, env_ids, init_pos, path_file,
+                                          yaw_deg=getattr(flags, "path_yaw", 0.0))
                 if getattr(flags, "verbose_path", False):
                     print(
                         "[fixed_path] {} -> {} verts, length {:.2f} m, step {:.4f} m".format(
