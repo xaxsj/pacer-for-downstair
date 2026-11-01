@@ -836,7 +836,7 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         env_ids = torch.arange(self.num_envs,
                                device=self.device,
                                dtype=torch.long)
-        tar_pos = self._traj_gen.calc_pos(env_ids, time)
+        tar_pos = self._traj_gen.calc_pos(env_ids, self._anchored_time(env_ids, 0))
         ### ZL: entry point
         # self._traj_gen.update_sim_pos(self._humanoid_root_states[)
 
@@ -858,7 +858,7 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
         time = self.progress_buf * self.dt
         env_ids = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
-        tar_pos = self._traj_gen.calc_pos(env_ids, time)
+        tar_pos = self._traj_gen.calc_pos(env_ids, self._anchored_time(env_ids, 1))
         if self.fuzzy_target:
             location_reward = compute_location_reward_fuzzy(root_pos, tar_pos)
         else:
