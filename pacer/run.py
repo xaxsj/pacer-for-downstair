@@ -203,9 +203,32 @@ def main():
 
     flags.add_proj = args.add_proj
 
+    # TERRA: 诊断开关（--no_collision_check 关掉摔倒判定）
+    if getattr(args, "disable_fall_check", False):
+        flags.no_collision_check = True
+
     # TERRA: 固定路径（--path_file <json>）；为空时沿用程序化随机轨迹
     flags.path_file = getattr(args, "path_file", "") or ""
     flags.verbose_path = True
+
+    # TERRA: 无窗口自动录制（导出状态供本地渲染）
+    flags.auto_record = getattr(args, "auto_record", False)
+    flags.record_frames = getattr(args, "record_frames", 300)
+
+    # TERRA: 固定出生点（--start_xy "x,y"）
+    start_xy = getattr(args, "start_xy", "") or ""
+    if start_xy:
+        sx, sy = (float(v) for v in start_xy.split(","))
+        flags.start_xy = (sx, sy)
+    else:
+        flags.start_xy = None
+
+    # TERRA: 固定初始朝向（--start_yaw 弧度）
+    start_yaw = getattr(args, "start_yaw", -999.0)
+    flags.start_yaw = None if start_yaw <= -900.0 else float(start_yaw)
+
+    # TERRA: 地形文件（--mesh_name）
+    flags.mesh_name = getattr(args, "mesh_name", "") or ""
 
     if args.server_mode:
 

@@ -1157,7 +1157,7 @@ class Robot:
         self.real_weight_porpotion = cfg.get("real_weight_porpotion", False)
         self.rel_joint_lm = cfg.get("rel_joint_lm",
                                     True)  # Rolling this out worldwide!!
-        os.makedirs("/tmp/smpl/", exist_ok=True)
+        os.makedirs("/tmp/pacer_tmp/smpl/", exist_ok=True)
         self.masterfoot = cfg.get("masterfoot", False)
         self.param_specs = self.cfg.get("body_params", {})
         self.hull_dict = {}
@@ -1284,7 +1284,7 @@ class Robot:
         # self.remove_geoms()
         size_dict = {}
         if self.mesh:
-            self.model_dirs.append(f"/tmp/smpl/{uuid.uuid4()}")
+            self.model_dirs.append(f"/tmp/pacer_tmp/smpl/{uuid.uuid4()}")
             # self.model_dirs.append(f"pacer/data/assets/mesh/smpl/{uuid.uuid4()}")
 
             self.skeleton = SkeletonMesh(self.model_dirs[-1])

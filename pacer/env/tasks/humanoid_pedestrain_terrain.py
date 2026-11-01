@@ -476,14 +476,32 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
             rb_pos, rb_rot = None, None
 
 
-        if flags.random_heading:
-            random_rot = np.zeros([num_envs, 3])
-            random_rot[:, 2] = np.pi * (2 * np.random.random([num_envs]) - 1.0)
-            random_heading_quat = torch.from_numpy(sRot.from_euler("xyz", random_rot).as_quat()).float().to(self.device)
+        # TERRA: also enter this block when a fixed start yaw is requested
+        if flags.random_heading or getattr(flags, "start_yaw", None) is not None:
+            start_yaw = getattr(flags, "start_yaw", None)
+            if start_yaw is not None:
+                # Absolute heading: cancel the current heading first, then apply the target.
+                cur_heading = torch_utils.calc_heading_quat(root_rot)
+                # scipy 的 as_quat() 返回 (x, y, z, w)，Isaac Gym 用 (w, x, y, z)
+                q_xyzw = sRot.from_euler(
+                    "z", [float(start_yaw)] * int(num_envs)).as_quat()
+                q_wxyz = q_xyzw[:, [3, 0, 1, 2]]
+                tgt = torch.from_numpy(q_wxyz).float().to(self.device)
+                random_heading_quat = quat_mul(tgt, torch_utils.quat_conjugate(cur_heading))
+            else:
+                random_rot = np.zeros([num_envs, 3])
+                random_rot[:, 2] = np.pi * (2 * np.random.random([num_envs]) - 1.0)
+                random_heading_quat = torch.from_numpy(
+                    sRot.from_euler("xyz", random_rot).as_quat()).float().to(self.device)
             random_heading_quat_repeat = random_heading_quat[:, None].repeat(1, 24, 1)
             root_rot = quat_mul(random_heading_quat, root_rot).clone()
-            rb_pos = quat_apply(random_heading_quat_repeat, rb_pos - root_pos[:, None, :]).clone()
-            key_pos  = quat_apply(random_heading_quat_repeat[:, :4, :], (key_pos - root_pos[:, None, :])).clone()
+            # 绕根位置旋转刚体，然后把根位置加回去（原代码漏了这一步）
+            rb_pos = (quat_apply(random_heading_quat_repeat,
+                                 rb_pos - root_pos[:, None, :])
+                      + root_pos[:, None, :]).clone()
+            key_pos = (quat_apply(random_heading_quat_repeat[:, :4, :],
+                                  key_pos - root_pos[:, None, :])
+                       + root_pos[:, None, :]).clone()
             rb_rot = quat_mul(random_heading_quat_repeat, rb_rot).clone()
             root_ang_vel = quat_apply(random_heading_quat, root_ang_vel).clone()
 
@@ -516,6 +534,12 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         if flags.server_mode:
             new_traj = self._traj_gen.input_new_trajs(env_ids)
             new_root_xy[:, 0], new_root_xy[:, 1] = new_traj[:, 0, 0], new_traj[:, 0,  1]
+
+        # TERRA: fixed spawn position (--start_xy "x,y"), used for "start at platform top".
+        start_xy = getattr(flags, "start_xy", None)
+        if start_xy is not None:
+            new_root_xy[:, 0] = float(start_xy[0])
+            new_root_xy[:, 1] = float(start_xy[1])
 
 
 
@@ -751,7 +775,8 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         # scene_name = "parking"
         # scene_name = "parking_with_cars"
         # scene_name = "with_less_car"
-        scene_name = "mesh-downtown-san-jose-mapaligned-cropped-bottom-part-global"
+        # scene_name = "mesh-downtown-san-jose-mapaligned-cropped-bottom-part-global"
+        scene_name = getattr(flags, "mesh_name", "") or "stairs20"
         self.mesh_data = joblib.load(f"data/mesh/{scene_name}.pkl")
 
         mesh_vertices = self.mesh_data["vertices"]

@@ -70,7 +70,7 @@ gender_beta = np.array([
 smpl_robot.load_from_skeleton(betas=torch.from_numpy(gender_beta[None, 1:]),
                               gender=gender_beta[0:1],
                               objs_info=None)
-test_good = f"/tmp/smpl/test_good.xml"
+test_good = f"/tmp/pacer_tmp/smpl/test_good.xml"
 smpl_robot.write_xml(test_good)
 sk_tree = SkeletonTree.from_mjcf(test_good)
 

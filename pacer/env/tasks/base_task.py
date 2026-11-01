@@ -33,6 +33,7 @@ import aiohttp, cv2, asyncio
 import json
 from collections import deque
 import shutil
+import pickle
 PORT = 8081
 # SERVER = "klab-cereal.pc.cs.cmu.edu"
 SERVER = "klab-oatmeal.pc.cs.cmu.edu"
@@ -181,6 +182,9 @@ class BaseTask():
 
         self.recorder_camera_handle = self.recorder_camera_handles[0]
         self.recording, self.recording_state_change = False, False
+        # TERRA: 无窗口自动录制（--auto_record），导出状态供本地渲染
+        self._auto_record_steps = 0
+        self._auto_record_done = False
         self.max_video_queue_size = 6000
         self._video_queue = deque(maxlen=self.max_video_queue_size)
         rendering_out = osp.join("output", "renderings")
@@ -233,6 +237,119 @@ class BaseTask():
         if self.dr_randomizations.get('observations', None):
             self.obs_buf = self.dr_randomizations['observations'][
                 'noise_lambda'](self.obs_buf)
+
+        # TERRA: 每步采集状态，够数就导出并退出（不依赖 viewer）
+        if flags.auto_record and not self._auto_record_done:
+            self._record_states()
+            if hasattr(self, "_rigid_body_pos"):
+                self.state_record["rigid_body_pos"].append(
+                    self._rigid_body_pos.cpu().clone())
+            if hasattr(self, "_fetch_traj_samples"):
+                try:
+                    self.state_record["traj_samples"].append(
+                        self._fetch_traj_samples().detach().cpu().clone())
+                except Exception:
+                    pass
+            try:
+                self.state_record["obs"].append(self.obs_buf.detach().cpu().clone())
+            except Exception:
+                pass
+            self._auto_record_steps += 1
+            if flags.auto_record_video:
+                self._capture_auto_video()
+            if self._auto_record_steps >= flags.record_frames:
+                self._auto_record_done = True
+                self._dump_auto_record()
+
+    def _capture_auto_video(self):
+        """用 Isaac Gym 相机传感器抓一帧（无需窗口）。"""
+        try:
+            if getattr(self, "_auto_writer", None) is None:
+                out_dir = osp.join("output", "renderings")
+                os.makedirs(out_dir, exist_ok=True)
+                stamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+                self._auto_video_path = osp.join(out_dir, f"auto-{stamp}.mp4")
+                self._auto_writer = imageio.get_writer(
+                    self._auto_video_path, fps=30, macro_block_size=None)
+                print(f"[auto_record] recording video -> {self._auto_video_path}")
+
+            env_idx = self.viewing_env_idx
+            cam_handle = self.recorder_camera_handles[env_idx]
+            root = self._humanoid_root_states[env_idx, 0:3].cpu().numpy()
+            # 侧后方视角：能同时看到角色与整段楼梯
+            cam_pos = gymapi.Vec3(float(root[0]) + 1.5,
+                                  float(root[1]) - 7.5,
+                                  float(root[2]) + 3.0)
+            cam_target = gymapi.Vec3(float(root[0]) + 1.5,
+                                     float(root[1]) + 0.5,
+                                     float(root[2]) - 0.2)
+            self.gym.set_camera_location(cam_handle, self.envs[env_idx],
+                                         cam_pos, cam_target)
+            self.gym.render_all_camera_sensors(self.sim)
+            color = self.gym.get_camera_image(
+                self.sim, self.envs[env_idx], cam_handle, gymapi.IMAGE_COLOR)
+            frame = color.reshape(color.shape[0], -1, 4)[..., :3]
+            self._auto_writer.append_data(frame)
+        except Exception as exc:
+            print(f"[auto_record] video capture failed: {type(exc).__name__}: {exc}")
+            flags.auto_record_video = False
+
+    def _dump_auto_record(self):
+        """把自动录制到的状态写成 pkl 供本地渲染，然后硬退出。"""
+        out_dir = osp.join("output", "recordings")
+        os.makedirs(out_dir, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        out_path = osp.join(out_dir, f"states-{stamp}.pkl")
+
+        payload = {
+            "dof_pos": torch.stack(self.state_record["dof_pos"], dim=0).cpu(),
+            "root_states": torch.stack(self.state_record["root_states"], dim=0).cpu(),
+            "progress": torch.stack(self.state_record["progress"], dim=0).cpu(),
+            "path_file": getattr(flags, "path_file", ""),
+            "num_envs": int(self.num_envs),
+        }
+        if self.state_record.get("rigid_body_pos"):
+            payload["rigid_body_pos"] = torch.stack(
+                self.state_record["rigid_body_pos"], dim=0).cpu()
+        # 注意：不导出 skeleton_trees（poselib 对象内含 CUDA 张量，
+        # 本地纯 CPU 环境无法反序列化）。骨骼层级在本地按 SMPL 标准定义即可。
+        if hasattr(self, "humanoid_betas"):
+            betas = self.humanoid_betas
+            if torch.is_tensor(betas):
+                betas = betas.detach().cpu()
+            payload["humanoid_betas"] = betas
+        # 供离线核对：策略实际看到的那条折线，以及时间步长
+        if hasattr(self, "_traj_gen"):
+            try:
+                payload["traj_verts"] = self._traj_gen.get_traj_verts(0).detach().cpu().numpy()
+            except Exception:
+                pass
+        payload["dt"] = float(self.dt) if hasattr(self, "dt") else 0.0
+        if self.state_record.get("traj_samples"):
+            payload["traj_samples"] = torch.stack(
+                self.state_record["traj_samples"], dim=0).cpu()
+        if self.state_record.get("obs"):
+            payload["obs"] = torch.stack(self.state_record["obs"], dim=0).cpu()
+        if self.state_record.get("progress"):
+            pass
+
+        with open(out_path, "wb") as fh:
+            pickle.dump(payload, fh, protocol=4)
+
+        if getattr(self, "_auto_writer", None) is not None:
+            try:
+                self._auto_writer.close()
+                print(f"[auto_record] video written -> {self._auto_video_path}")
+            except Exception:
+                pass
+            self._auto_writer = None
+
+        print(f"[auto_record] saved {out_path}")
+        for key in ("dof_pos", "root_states", "rigid_body_pos"):
+            if key in payload:
+                print(f"    {key:16s} {tuple(payload[key].shape)}")
+        sys.stdout.flush()
+        os._exit(0)
 
     def get_states(self):
         return self.states_buf

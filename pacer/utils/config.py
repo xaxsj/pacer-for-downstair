@@ -415,6 +415,42 @@ def get_args(benchmark=False):
             "help": "JSON file with a fixed 2D path [[x,y,z], ...]; replaces the procedural trajectory"
         },
         {
+            "name": "--auto_record",
+            "action": "store_true",
+            "default": False,
+            "help": "headless: record states for N steps, dump pkl and exit (no viewer needed)"
+        },
+        {
+            "name": "--record_frames",
+            "type": int,
+            "default": 300,
+            "help": "how many control steps to record with --auto_record"
+        },
+        {
+            "name": "--start_xy",
+            "type": str,
+            "default": "",
+            "help": "fixed spawn position 'x,y' in world meters (default: random)"
+        },
+        {
+            "name": "--start_yaw",
+            "type": float,
+            "default": -999.0,
+            "help": "fixed initial heading in radians (default: unset)"
+        },
+        {
+            "name": "--mesh_name",
+            "type": str,
+            "default": "",
+            "help": "terrain name: loads data/mesh/<mesh_name>.pkl (with --real_mesh)"
+        },
+        {
+            "name": "--disable_fall_check",
+            "action": "store_true",
+            "default": False,
+            "help": "diagnostic: disable the fall/termination check"
+        },
+        {
             "name": "--server_mode",
             "action": "store_true",
             "default": False,

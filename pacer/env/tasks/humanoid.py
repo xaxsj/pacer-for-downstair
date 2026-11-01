@@ -598,8 +598,8 @@ class Humanoid(BaseTask):
         res = {}
         for idx in num_humanoids:
             asset_id = uuid4()
-            asset_file_real = f"/tmp/smpl/smpl_humanoid_{asset_id}.xml"
-            asset_file_real_orig = f"/tmp/smpl/smpl_humanoid_{asset_id}_orig.xml"
+            asset_file_real = f"/tmp/pacer_tmp/smpl/smpl_humanoid_{asset_id}.xml"
+            asset_file_real_orig = f"/tmp/pacer_tmp/smpl/smpl_humanoid_{asset_id}_orig.xml"
 
             if self.has_shape_variation:
                 #####
