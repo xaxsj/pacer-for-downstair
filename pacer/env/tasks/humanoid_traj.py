@@ -200,6 +200,10 @@ class HumanoidTraj(humanoid_amp_task.HumanoidAMPTask):
         再换算成等效时间；sample_offset 以 traj_sample_timestep 为单位向前偏移。
         于是观测 / 终止 / 奖励都以「角色当前位置」为参考，而不是全局时间轴。
         设 PACER_TRAJ_ANCHOR=time 可回到原来的纯时间推进。
+
+        PACER_MIN_LEAD（默认 0.5 m）：第一个路点与角色的最小间距。
+        整组路点整体前移，相邻间距不变。用于防止点贴脚 / 落到身后导致
+        「背对前进方向走」（backpedal）。
         """
         if __import__("os").environ.get("PACER_TRAJ_ANCHOR", "char") != "char":
             return self.progress_buf[env_ids] * self.dt
@@ -219,8 +223,11 @@ class HumanoidTraj(humanoid_amp_task.HumanoidAMPTask):
         _arc = (_cum.gather(1, _i.unsqueeze(-1)).squeeze(-1)
                 + _t.squeeze(-1).gather(1, _i.unsqueeze(-1)).squeeze(-1)
                 * _seg.gather(1, _i.unsqueeze(-1)).squeeze(-1))
-        _u = (_arc / _cum[:, -1].clamp_min(1e-9)).clamp(0.0, 1.0)
-        return (_u * self._traj_gen.get_traj_duration()
+        _total = _cum[:, -1].clamp_min(1e-9)
+        _lead = float(__import__("os").environ.get("PACER_MIN_LEAD", "0.5"))
+        _dur = self._traj_gen.get_traj_duration()
+        _u = (_arc / _total).clamp(0.0, 1.0)
+        return (_u * _dur + (_lead / _total) * _dur
                 + float(sample_offset) * self._traj_sample_timestep)
 
     def _fetch_traj_samples(self, env_ids=None):
