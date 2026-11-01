@@ -1,0 +1,76 @@
+# PACER cleanup manifest
+# time: 2026-11-01 23:51:54 CST
+# scope: pkl/mp4 artifacts only. data/, output/release/, isaacgym_pkg/,
+#        mesh, paths, code, experiment_result/, output/recordings/ untouched.
+
+## [1] stray pkl/mp4 at /root/autodl-tmp
+-rw-r--r-- 1 root root  770829 Nov  1 22:12 /root/autodl-tmp/ctl_pathfile.pkl
+-rw-r--r-- 1 root root  770809 Nov  1 22:11 /root/autodl-tmp/ctl_procedural.pkl
+-rw-r--r-- 1 root root  195546 Nov  1 22:00 /root/autodl-tmp/dbg_0.0.pkl
+-rw-r--r-- 1 root root  195546 Nov  1 22:01 /root/autodl-tmp/dbg_1.5707963.pkl
+-rw-r--r-- 1 root root  195546 Nov  1 22:01 /root/autodl-tmp/dbg_3.1415927.pkl
+-rw-r--r-- 1 root root  246529 Nov  1 22:06 /root/autodl-tmp/f166.mp4
+-rw-r--r-- 1 root root  962597 Nov  1 22:06 /root/autodl-tmp/f166.pkl
+-rw-r--r-- 1 root root  292833 Nov  1 21:44 /root/autodl-tmp/fy_180.mp4
+-rw-r--r-- 1 root root  962597 Nov  1 21:44 /root/autodl-tmp/fy_180.pkl
+-rw-r--r-- 1 root root  209698 Nov  1 21:43 /root/autodl-tmp/fy_90.mp4
+-rw-r--r-- 1 root root  962597 Nov  1 21:43 /root/autodl-tmp/fy_90.pkl
+-rw-r--r-- 1 root root  770809 Nov  1 21:34 /root/autodl-tmp/proc.pkl
+-rw-r--r-- 1 root root  642997 Nov  1 22:46 /root/autodl-tmp/r112.pkl
+-rw-r--r-- 1 root root  397655 Nov  1 22:25 /root/autodl-tmp/r202.mp4
+-rw-r--r-- 1 root root 1282206 Nov  1 22:25 /root/autodl-tmp/r202.pkl
+-rw-r--r-- 1 root root  642997 Nov  1 22:53 /root/autodl-tmp/r90.pkl
+-rw-r--r-- 1 root root  254208 Nov  1 22:19 /root/autodl-tmp/ry_0.mp4
+-rw-r--r-- 1 root root  962597 Nov  1 22:19 /root/autodl-tmp/ry_0.pkl
+-rw-r--r-- 1 root root  256034 Nov  1 22:20 /root/autodl-tmp/ry_92.mp4
+-rw-r--r-- 1 root root  962597 Nov  1 22:20 /root/autodl-tmp/ry_92.pkl
+-rw-r--r-- 1 root root 1282206 Nov  1 21:15 /root/autodl-tmp/s05.pkl
+-rw-r--r-- 1 root root  320449 Nov  1 21:29 /root/autodl-tmp/uni.mp4
+-rw-r--r-- 1 root root 1282206 Nov  1 21:29 /root/autodl-tmp/uni.pkl
+-rw-r--r-- 1 root root  770828 Nov  1 21:10 /root/autodl-tmp/yaw_minus90.pkl
+-rw-r--r-- 1 root root  770828 Nov  1 21:11 /root/autodl-tmp/yaw_plus90.pkl
+-rw-r--r-- 1 root root  247281 Nov  1 21:20 /root/autodl-tmp/yawk_0.mp4
+-rw-r--r-- 1 root root 1282206 Nov  1 21:20 /root/autodl-tmp/yawk_0.pkl
+-rw-r--r-- 1 root root  254694 Nov  1 21:21 /root/autodl-tmp/yawk_180.mp4
+-rw-r--r-- 1 root root 1282206 Nov  1 21:21 /root/autodl-tmp/yawk_180.pkl
+-rw-r--r-- 1 root root  277460 Nov  1 21:22 /root/autodl-tmp/yawk_270.mp4
+-rw-r--r-- 1 root root 1282206 Nov  1 21:22 /root/autodl-tmp/yawk_270.pkl
+-rw-r--r-- 1 root root  253447 Nov  1 21:20 /root/autodl-tmp/yawk_90.mp4
+-rw-r--r-- 1 root root 1282206 Nov  1 21:20 /root/autodl-tmp/yawk_90.pkl
+
+## [2] old renderings to be removed
+-rw-r--r-- 1 root root 2220877 Nov  1 20:46 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-20-46-04.mp4
+-rw-r--r-- 1 root root  581585 Nov  1 20:48 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-20-48-28.mp4
+-rw-r--r-- 1 root root  478886 Nov  1 20:50 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-20-50-20.mp4
+-rw-r--r-- 1 root root  374701 Nov  1 20:52 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-20-52-44.mp4
+-rw-r--r-- 1 root root  333731 Nov  1 20:56 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-20-56-09.mp4
+-rw-r--r-- 1 root root  797039 Nov  1 21:01 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-01-30.mp4
+-rw-r--r-- 1 root root  317469 Nov  1 21:04 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-04-35.mp4
+-rw-r--r-- 1 root root  317888 Nov  1 21:10 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-09-59.mp4
+-rw-r--r-- 1 root root  317469 Nov  1 21:11 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-11-02.mp4
+-rw-r--r-- 1 root root  221896 Nov  1 21:15 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-14-58.mp4
+-rw-r--r-- 1 root root  247281 Nov  1 21:20 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-19-51.mp4
+-rw-r--r-- 1 root root  253447 Nov  1 21:20 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-20-32.mp4
+-rw-r--r-- 1 root root  254694 Nov  1 21:21 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-21-13.mp4
+-rw-r--r-- 1 root root  277460 Nov  1 21:22 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-21-53.mp4
+-rw-r--r-- 1 root root  320449 Nov  1 21:29 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-29-20.mp4
+-rw-r--r-- 1 root root  352775 Nov  1 21:34 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-34-46.mp4
+-rw-r--r-- 1 root root  209698 Nov  1 21:43 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-43-48.mp4
+-rw-r--r-- 1 root root  292833 Nov  1 21:44 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-44-28.mp4
+-rw-r--r-- 1 root root   53207 Nov  1 21:55 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-55-25.mp4
+-rw-r--r-- 1 root root   48762 Nov  1 21:55 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-55-57.mp4
+-rw-r--r-- 1 root root   59733 Nov  1 21:56 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-21-56-30.mp4
+-rw-r--r-- 1 root root   45142 Nov  1 22:00 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-00-45.mp4
+-rw-r--r-- 1 root root   52482 Nov  1 22:01 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-01-18.mp4
+-rw-r--r-- 1 root root   48807 Nov  1 22:01 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-01-51.mp4
+-rw-r--r-- 1 root root  246529 Nov  1 22:06 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-06-49.mp4
+-rw-r--r-- 1 root root 2312604 Nov  1 22:11 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-11-01.mp4
+-rw-r--r-- 1 root root 2347366 Nov  1 22:12 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-12-19.mp4
+-rw-r--r-- 1 root root  254208 Nov  1 22:19 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-19-15.mp4
+-rw-r--r-- 1 root root  256034 Nov  1 22:20 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-19-53.mp4
+-rw-r--r-- 1 root root  397655 Nov  1 22:25 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-25-32.mp4
+-rw-r--r-- 1 root root  173821 Nov  1 22:46 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-46-08.mp4
+-rw-r--r-- 1 root root  171304 Nov  1 22:53 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-22-53-01.mp4
+-rw-r--r-- 1 root root  405375 Nov  1 23:33 /root/autodl-tmp/pacer/repo/output/renderings/auto-2026-11-01-23-33-24.mp4
+
+## removed: 33 stray files + 32 old renderings
