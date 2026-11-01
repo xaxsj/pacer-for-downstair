@@ -198,7 +198,28 @@ class HumanoidTraj(humanoid_amp_task.HumanoidAMPTask):
         if (env_ids is None):
             env_ids = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
 
-        timestep_beg = self.progress_buf[env_ids] * self.dt
+        # [patched] PACER_TRAJ_ANCHOR=char -> 璺偣閿氬畾鍦ㄨ鑹茶韩涓婏紙灞€閮ㄥ疄鏃剁洰鏍囷級
+        if __import__("os").environ.get("PACER_TRAJ_ANCHOR", "time") == "char":
+            _v = self._traj_gen._verts[env_ids]
+            _root_xy = self._humanoid_root_states[env_ids, 0:2]
+            _a = _v[:, :-1, :2]
+            _ab = _v[:, 1:, :2] - _a
+            _L2 = (_ab * _ab).sum(-1, keepdim=True).clamp_min(1e-9)
+            _t = (((_root_xy.unsqueeze(1) - _a) * _ab).sum(-1, keepdim=True) / _L2).clamp(0.0, 1.0)
+            _p = _a + _t * _ab
+            _d = ((_root_xy.unsqueeze(1) - _p) ** 2).sum(-1)
+            _i = _d.argmin(dim=-1)
+            _seg = _ab.norm(dim=-1)
+            _cum = torch.cat(
+                [torch.zeros(_seg.shape[0], 1, device=_seg.device, dtype=_seg.dtype),
+                 _seg.cumsum(-1)], dim=-1)
+            _arc = (_cum.gather(1, _i.unsqueeze(-1)).squeeze(-1)
+                    + _t.squeeze(-1).gather(1, _i.unsqueeze(-1)).squeeze(-1)
+                    * _seg.gather(1, _i.unsqueeze(-1)).squeeze(-1))
+            _u = (_arc / _cum[:, -1].clamp_min(1e-9)).clamp(0.0, 1.0)
+            timestep_beg = _u * self._traj_gen.get_traj_duration()
+        else:
+            timestep_beg = self.progress_buf[env_ids] * self.dt
         timesteps = torch.arange(self._num_traj_samples, device=self.device, dtype=torch.float)
         timesteps = timesteps * self._traj_sample_timestep
         traj_timesteps = timestep_beg.unsqueeze(-1) + timesteps

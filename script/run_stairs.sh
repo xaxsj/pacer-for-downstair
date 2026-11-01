@@ -79,7 +79,8 @@ python - "$PATHFILE" "$CFG" <<'PY' | tee -a "$LOG"
 import json, re, sys
 p = json.load(open(sys.argv[1]))
 pts = p["path"] if isinstance(p, dict) else p
-L = sum(((pts[i+1][0]-pts[i][0])**2 + (pts[i+1][1]-pts[i][1])**2)**0.5
+L = sum(((pts[i+1][0]-pts[i][0])**2 + (pts[i+1][1]-pts[i][1])**2
+         + (pts[i+1][2]-pts[i][2])**2)**0.5
         for i in range(len(pts)-1))
 dt = 0.5
 for line in open(sys.argv[2]):
