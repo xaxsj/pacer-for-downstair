@@ -149,3 +149,8 @@ new_trials
 
 # patch backups (created by script/patch_*.py)
 *.orig
+# 实验产物：视频/截图不入库（体积大且可重新生成）
+experiment_result/**/*.mp4
+experiment_result/**/*.png
+experiment_result/*.mp4
+experiment_result/*.png
