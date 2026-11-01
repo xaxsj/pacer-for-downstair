@@ -201,9 +201,12 @@ class HumanoidTraj(humanoid_amp_task.HumanoidAMPTask):
         于是观测 / 终止 / 奖励都以「角色当前位置」为参考，而不是全局时间轴。
         设 PACER_TRAJ_ANCHOR=time 可回到原来的纯时间推进。
 
-        PACER_VIEW_MIN（默认 2.0 m）：视野下限，即最近一个路点与角色的距离。
+        PACER_VIEW_MIN（默认 1.0 m）：视野下限，即最近一个路点与角色的距离。
         整组路点整体前移（相邻间距不变）。用于把「脚下 / 身后」的区域整段让出来，
         避免策略把离自己太近的点当成目标而转向（backpedal）。
+        二维扫描（dt x view_min）实测 1.0 m 最优：
+        dt=2.0/view_min=1.0 的航向误差 5.0 度，而 view_min=0 为 14.4 度、
+        view_min=2.0 为 19.7 度（2 m 盲区会把策略逼成冲刺）。
         """
         if __import__("os").environ.get("PACER_TRAJ_ANCHOR", "char") != "char":
             return self.progress_buf[env_ids] * self.dt
@@ -224,7 +227,7 @@ class HumanoidTraj(humanoid_amp_task.HumanoidAMPTask):
                 + _t.squeeze(-1).gather(1, _i.unsqueeze(-1)).squeeze(-1)
                 * _seg.gather(1, _i.unsqueeze(-1)).squeeze(-1))
         _total = _cum[:, -1].clamp_min(1e-9)
-        _lead = float(__import__("os").environ.get("PACER_VIEW_MIN", "2.0"))
+        _lead = float(__import__("os").environ.get("PACER_VIEW_MIN", "1.0"))
         _dur = self._traj_gen.get_traj_duration()
         _u = (_arc / _total).clamp(0.0, 1.0)
         return (_u * _dur + (_lead / _total) * _dur
