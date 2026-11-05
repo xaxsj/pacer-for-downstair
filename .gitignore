@@ -154,3 +154,13 @@ experiment_result/**/*.mp4
 experiment_result/**/*.png
 experiment_result/*.mp4
 experiment_result/*.png
+# Generated media artifacts (do not commit videos/images)
+/scenes/
+/experiment_result/
+/output/renderings/
+/output/recordings/
+*.mp4
+*.avi
+*.mov
+*.webm
+*.gif
