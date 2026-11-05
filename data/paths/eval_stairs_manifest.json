@@ -1,0 +1,22 @@
+{
+  "variants": [
+    {
+      "name": "eval_r012_t028",
+      "riser": 0.12,
+      "tread": 0.28,
+      "steps": 10
+    },
+    {
+      "name": "eval_r018_t032",
+      "riser": 0.18,
+      "tread": 0.32,
+      "steps": 10
+    },
+    {
+      "name": "eval_r010_t035",
+      "riser": 0.1,
+      "tread": 0.35,
+      "steps": 10
+    }
+  ]
+}
