@@ -252,7 +252,9 @@ class MotionLib():
         num_jobs = mp.cpu_count()
 
         if num_jobs <= 8: num_jobs = 1
-        # num_jobs = 1
+        # Isaac Gym/CUDA is initialized before this fork point on some
+        # machines; force serial motion loading to avoid a child deadlock.
+        num_jobs = 1
 
         res_acc = {} # using dictionary ensures order of the results.
         jobs = motion_data_list

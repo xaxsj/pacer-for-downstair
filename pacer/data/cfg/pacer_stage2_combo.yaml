@@ -33,7 +33,8 @@ env:
 
   has_shape_obs: True
   has_shape_obs_disc: True
-  has_shape_variation: True
+  has_shape_variation: False
+  pregenerated_asset: "models/smpl_humanoid.xml"
   shape_resampling_interval: 250
 
   pdControl: True

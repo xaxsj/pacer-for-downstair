@@ -745,6 +745,7 @@ class Humanoid(BaseTask):
                 if pregenerated and not os.path.isabs(pregenerated):
                     pregenerated = os.path.join(os.getcwd(), pregenerated)
                 if pregenerated and os.path.isfile(pregenerated):
+                    print(f"[asset] using pregenerated {pregenerated}", flush=True)
                     gender_beta = np.zeros(17)
                     asset_file_real = pregenerated
                 else:
