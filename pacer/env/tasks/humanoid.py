@@ -737,11 +737,24 @@ class Humanoid(BaseTask):
                 smpl_robot.remove_geoms()  # Clean up the geoms
                 self.humanoid_betas = torch.vstack(self.humanoid_betas).to(self.device)
             else:
-                gender_beta, asset_file_real = self._create_smpl_humanoid_xml([0], smpl_robot, None, 0)[0]
+                # Reuse a pre-generated SMPL humanoid MJCF when available.
+                # This avoids the per-env XML generation path (and its
+                # multiprocessing side effects) for multi-env training.
+                pregenerated = self.cfg["env"].get(
+                    "pregenerated_asset", "models/smpl_humanoid.xml")
+                if pregenerated and not os.path.isabs(pregenerated):
+                    pregenerated = os.path.join(os.getcwd(), pregenerated)
+                if pregenerated and os.path.isfile(pregenerated):
+                    gender_beta = np.zeros(17)
+                    asset_file_real = pregenerated
+                else:
+                    gender_beta, asset_file_real = self._create_smpl_humanoid_xml([0], smpl_robot, None, 0)[0]
                 sk_tree = SkeletonTree.from_mjcf(asset_file_real)
 
-                humanoid_asset = self.gym.load_asset(self.sim, asset_root,
-                                                     asset_file_real,
+                asset_root_pre = os.path.dirname(asset_file_real)
+                asset_file_pre = os.path.basename(asset_file_real)
+                humanoid_asset = self.gym.load_asset(self.sim, asset_root_pre,
+                                                     asset_file_pre,
                                                      asset_options)
                 actuator_props = self.gym.get_asset_actuator_properties(
                     humanoid_asset)

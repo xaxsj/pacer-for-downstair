@@ -74,7 +74,7 @@ env:
     mapLength: 20.
     mapWidth: 20.
     numLevels: 5
-    numTerrains: 50
+    numTerrains: 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
     terrainProportions: [0.0, 0.0, 0.35, 0.35, 0.0, 0.0, 0.0, 0.30]
     # terrainProportions: [0, 0, 0, 0., 0., 0., 1, 0]
