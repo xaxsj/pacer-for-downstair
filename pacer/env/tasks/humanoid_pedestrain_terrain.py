@@ -1095,6 +1095,11 @@ class Terrain:
             np.sum(cfg["terrainProportions"][:i + 1])
             for i in range(len(cfg["terrainProportions"]))
         ]
+        # Randomized stair geometry (riser height and tread depth).
+        self.stair_height_min = float(cfg.get("stair_height_min", 0.10))
+        self.stair_height_max = float(cfg.get("stair_height_max", 0.22))
+        self.stair_tread_min = float(cfg.get("stair_tread_min", 0.24))
+        self.stair_tread_max = float(cfg.get("stair_tread_max", 0.38))
 
         self.env_rows = cfg["numLevels"]
         self.env_cols = cfg["numTerrains"]
@@ -1264,7 +1269,8 @@ class Terrain:
             slope = difficulty * 0.7
             discrete_obstacles_height = 0.025 + difficulty * 0.15
             stepping_stones_size = 2 - 1.8 * difficulty
-            step_height = 0.05 + 0.175 * difficulty
+            step_height = np.random.uniform(self.stair_height_min, self.stair_height_max)
+            step_tread = np.random.uniform(self.stair_tread_min, self.stair_tread_max)
             if choice < self.proportions[0]:
                 if choice < 0.05:
                     slope *= -1
@@ -1282,7 +1288,7 @@ class Terrain:
                 if choice < self.proportions[2]:
                     step_height *= -1
                 pyramid_stairs_terrain(terrain,
-                                       step_width=0.31,
+                                       step_width=step_tread,
                                        step_height=step_height,
                                        platform_size=3.)
             elif choice < self.proportions[4]:
@@ -1333,7 +1339,8 @@ class Terrain:
                 choice = j / num_terrains
 
                 slope = difficulty * 0.7
-                step_height = 0.05 + 0.175 * difficulty
+                step_height = np.random.uniform(self.stair_height_min, self.stair_height_max)
+                step_tread = np.random.uniform(self.stair_tread_min, self.stair_tread_max)
                 discrete_obstacles_height = 0.025 + difficulty * 0.15
                 stepping_stones_size = 2 - 1.8 * difficulty
 
@@ -1363,7 +1370,7 @@ class Terrain:
                     if choice < self.proportions[2]:
                         step_height *= -1
                     pyramid_stairs_terrain(terrain,
-                                           step_width=0.31,
+                                           step_width=step_tread,
                                            step_height=step_height,
                                            platform_size=3.)
                 elif choice < self.proportions[4]:

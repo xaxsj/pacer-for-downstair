@@ -76,6 +76,10 @@ env:
     mapWidth: 20.
     numLevels: 5
     numTerrains: 20
+    stair_height_min: 0.10
+    stair_height_max: 0.22
+    stair_tread_min: 0.24
+    stair_tread_max: 0.38
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
     terrainProportions: [0.0, 0.0, 0.45, 0.45, 0.0, 0.0, 0.0, 0.10]
     # terrainProportions: [0, 0, 0, 0., 0., 0., 1, 0]
