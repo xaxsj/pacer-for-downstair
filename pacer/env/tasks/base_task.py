@@ -244,6 +244,13 @@ class BaseTask():
             if hasattr(self, "_rigid_body_pos"):
                 self.state_record["rigid_body_pos"].append(
                     self._rigid_body_pos.cpu().clone())
+            for _name, _attr in (("rigid_body_rot", "_rigid_body_rot"),
+                                 ("rigid_body_vel", "_rigid_body_vel"),
+                                 ("contact_forces", "_contact_forces")):
+                _val = getattr(self, _attr, None)
+                if _val is not None:
+                    self.state_record.setdefault(_name, []).append(
+                        _val.detach().cpu().clone())
             if hasattr(self, "_fetch_traj_samples"):
                 try:
                     self.state_record["traj_samples"].append(
@@ -311,6 +318,12 @@ class BaseTask():
         if self.state_record.get("rigid_body_pos"):
             payload["rigid_body_pos"] = torch.stack(
                 self.state_record["rigid_body_pos"], dim=0).cpu()
+        for _key in ("rigid_body_rot", "rigid_body_vel", "contact_forces"):
+            if self.state_record.get(_key):
+                payload[_key] = torch.stack(
+                    self.state_record[_key], dim=0).cpu()
+        if hasattr(self, "_contact_body_ids"):
+            payload["contact_body_ids"] = self._contact_body_ids.detach().cpu()
         # 注意：不导出 skeleton_trees（poselib 对象内含 CUDA 张量，
         # 本地纯 CPU 环境无法反序列化）。骨骼层级在本地按 SMPL 标准定义即可。
         if hasattr(self, "humanoid_betas"):
@@ -345,7 +358,7 @@ class BaseTask():
             self._auto_writer = None
 
         print(f"[auto_record] saved {out_path}")
-        for key in ("dof_pos", "root_states", "rigid_body_pos"):
+        for key in ("dof_pos", "root_states", "rigid_body_pos", "rigid_body_rot", "rigid_body_vel", "contact_forces"):
             if key in payload:
                 print(f"    {key:16s} {tuple(payload[key].shape)}")
         sys.stdout.flush()
