@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize validation runs with a corrected terrain/foot mapping."""
+"""Summarize validation runs with foot-box contact geometry."""
 from __future__ import annotations
 
 import argparse
@@ -9,11 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_FEET = "3,4,7,8"
-
-
-def parse_ints(s: str):
-    return [int(x) for x in s.split(",") if x.strip() != ""]
+FEET = [(3, -0.0487), (4, +0.0070), (7, -0.0487), (8, +0.0070)]
 
 
 def height_sampler(md):
@@ -37,7 +33,6 @@ def main() -> int:
     ap.add_argument("--root", default="experiment_result/validation")
     ap.add_argument("--mesh", default="data/mesh/wide_stairs.pkl")
     ap.add_argument("--halfwidth", type=float, default=1.4)
-    ap.add_argument("--feet", default=DEFAULT_FEET)
     ap.add_argument("--airborne", type=float, default=0.05)
     ap.add_argument("--sink", type=float, default=-0.02)
     ap.add_argument("--out", default="experiment_result/validation/summary.csv")
@@ -46,7 +41,6 @@ def main() -> int:
     with open(args.mesh, "rb") as fh:
         md = pickle.load(fh)
     sample = height_sampler(md)
-    feet_all = parse_ints(args.feet)
 
     rows = []
     for p in sorted(Path(args.root).rglob("states.pkl")):
@@ -55,7 +49,6 @@ def main() -> int:
                 d = pickle.load(fh)
             root = np.asarray(d["root_states"])[:, 0]
             rb = np.asarray(d["rigid_body_pos"])[:, 0]
-            feet = [i for i in feet_all if i < rb.shape[1]]
             T = root.shape[0]
             z = root[:, 2]
             progress = np.asarray(d.get("progress", np.array([]))).reshape(T, -1)[:, 0] \
@@ -66,9 +59,10 @@ def main() -> int:
                 resets = np.unique(np.concatenate([resets, np.where(np.diff(progress) < -5)[0] + 1]))
             first_reset = int(resets[0]) if len(resets) else -1
 
-            foot_z = rb[:, feet, 2].min(axis=1)
-            h = np.array([sample(float(x), float(y)) for x, y in root[:, :2]])
-            clearance = foot_z - h
+            fb = np.stack([rb[:, idx, 2] + off for idx, off in FEET], axis=1)
+            fxy = np.stack([rb[:, idx, :2] for idx, _ in FEET], axis=1)
+            fh = np.array([[sample(float(q[0]), float(q[1])) for q in frame] for frame in fxy])
+            clearance = (fb - fh).min(axis=1)
             lateral = np.abs(root[:, 1])
 
             first_air = int(np.where(clearance > args.airborne)[0][0]) if np.any(clearance > args.airborne) else -1
