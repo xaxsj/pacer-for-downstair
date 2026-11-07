@@ -3,8 +3,8 @@ set -u
 source /data/ljx/scripts/pacer_env.sh
 cd "$PACER_ROOT"
 export CUDA_VISIBLE_DEVICES=4
-SEEDS="0 1"
-FRAMES=300
+SEEDS="$(seq 0 19)"
+FRAMES=900
 for mesh in wide_stairs narrow_stairs; do
   WEIGHTS=output/release/pacer CFG_ENV=pacer/data/cfg/pacer.yaml \
   CFG_TRAIN=pacer/data/cfg/train/rlg/amp_humanoid_smpl_sept_task.yaml \
