@@ -31,6 +31,25 @@ env:
   real_weight: True
   power_reward: True
 
+  # Dense unsafe-stepping rewards. Collision is enabled first; edge remains
+  # independently switchable until its ascent/descent sign is validated.
+  enable_collision_penalty: true
+  enable_edge_penalty: false
+  collision_reward_weight: 0.20
+  edge_reward_weight: 0.10
+  collision_reward_warmup_steps: 16000  # 500 PPO epochs x horizon 32
+  edge_reward_warmup_steps: 16000
+  collision_unsafe_distance: 0.20
+  collision_cone_deg: 30.0
+  collision_height_threshold: 0.03
+  collision_slope_threshold: 0.5
+  collision_height_margin: 0.04
+  collision_height_softness: 0.015
+  collision_speed_scale: 1.0
+  edge_gradient_threshold: 0.04
+  edge_activation_height: 0.12
+  edge_distance_scale: 0.12
+
   has_shape_obs: True
   has_shape_obs_disc: True
   has_shape_variation: False

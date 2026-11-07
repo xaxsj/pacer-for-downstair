@@ -7,6 +7,7 @@
 
 from shutil import ExecError
 import torch
+import torch.nn.functional as F
 import numpy as np
 
 import env.tasks.humanoid_traj as humanoid_traj
@@ -52,6 +53,27 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.power_coefficient = cfg["env"].get("power_coefficient", 0.0005)
         self.fuzzy_target = cfg["env"].get("fuzzy_target", False)
 
+        # Paper-inspired unsafe-stepping rewards. They are independent so the
+        # collision term can be validated before the edge term is enabled.
+        self.enable_collision_penalty = cfg["env"].get("enable_collision_penalty", False)
+        self.enable_edge_penalty = cfg["env"].get("enable_edge_penalty", False)
+        self.collision_reward_weight = float(cfg["env"].get("collision_reward_weight", 0.20))
+        self.edge_reward_weight = float(cfg["env"].get("edge_reward_weight", 0.10))
+        self.collision_reward_warmup_steps = int(cfg["env"].get("collision_reward_warmup_steps", 16000))
+        self.edge_reward_warmup_steps = int(cfg["env"].get("edge_reward_warmup_steps", 16000))
+        self.collision_unsafe_distance = float(cfg["env"].get("collision_unsafe_distance", 0.20))
+        self.collision_cone_deg = float(cfg["env"].get("collision_cone_deg", 30.0))
+        self.collision_height_threshold = float(cfg["env"].get("collision_height_threshold", 0.03))
+        self.collision_slope_threshold = float(cfg["env"].get("collision_slope_threshold", 0.5))
+        self.collision_height_margin = float(cfg["env"].get("collision_height_margin", 0.04))
+        self.collision_height_softness = float(cfg["env"].get("collision_height_softness", 0.015))
+        self.collision_speed_scale = float(cfg["env"].get("collision_speed_scale", 1.0))
+        self.edge_gradient_threshold = float(cfg["env"].get("edge_gradient_threshold", 0.04))
+        self.edge_activation_height = float(cfg["env"].get("edge_activation_height", 0.12))
+        self.edge_distance_scale = float(cfg["env"].get("edge_distance_scale", 0.12))
+        self._collision_reward_step = 0
+        self._edge_reward_step = 0
+
 
         self.square_height_points = self.init_square_height_points()
         self.terrain_obs_type = self.cfg['env'].get("terrain_obs_type",
@@ -81,12 +103,208 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
                          device_id=device_id,
                          headless=headless)
 
-        self.reward_raw = torch.zeros((self.num_envs, 2)).to(self.device)
+        self.reward_raw = torch.zeros((self.num_envs, 4)).to(self.device)
+        self._build_safe_stepping_tensors()
 
         if (not self.headless) and self.show_sensors:
             self._build_sensor_state_tensors()
 
         return
+
+    def _build_safe_stepping_tensors(self):
+        self._collision_body_ids = self._build_key_body_ids_tensor(
+            ["L_Ankle", "L_Toe", "R_Ankle", "R_Toe"])
+        self._edge_foot_ids = self._build_key_body_ids_tensor(
+            ["L_Ankle", "R_Ankle"])
+        self._collision_bottom_offsets = torch.tensor(
+            [-0.0487, 0.0070, -0.0487, 0.0070],
+            dtype=torch.float32, device=self.device)
+        self._edge_center_offsets = torch.tensor(
+            [[0.0596, 0.0132, -0.0279],
+             [0.0617, -0.0127, -0.0241]],
+            dtype=torch.float32, device=self.device)
+
+        grid_x = torch.linspace(-0.10, 0.10, 5, device=self.device)
+        grid_y = torch.linspace(-0.06, 0.06, 5, device=self.device)
+        grid_x, grid_y = torch.meshgrid(grid_x, grid_y)
+        self._edge_grid_size = 5
+        self._edge_local_grid = torch.stack(
+            [grid_x.flatten(), grid_y.flatten(),
+             torch.zeros_like(grid_x).flatten()], dim=-1)
+
+        sobel_x = torch.tensor(
+            [[-1.0, 0.0, 1.0],
+             [-2.0, 0.0, 2.0],
+             [-1.0, 0.0, 1.0]], device=self.device) / 8.0
+        sobel_y = sobel_x.t().contiguous()
+        self._edge_sobel_x = sobel_x.view(1, 1, 3, 3)
+        self._edge_sobel_y = sobel_y.view(1, 1, 3, 3)
+        return
+
+    def _sample_static_terrain(self, points):
+        """Sample immutable terrain without cloning the complete height map."""
+        batch_size, num_points, _ = points.shape
+        if self.cfg["env"]["terrain"]["terrainType"] == "plane":
+            return torch.zeros((batch_size, num_points), device=points.device,
+                               dtype=points.dtype)
+        px, py = self.terrain.world_points_to_map(points)
+        heights1 = self.terrain.heightsamples[px, py]
+        heights2 = self.terrain.heightsamples[px + 1, py + 1]
+        heights = torch.minimum(heights1, heights2).to(points.dtype)
+        return (heights * self.terrain.vertical_scale).view(batch_size, num_points)
+
+    @staticmethod
+    def _warmup_scale(step, warmup_steps):
+        if warmup_steps <= 0:
+            return 1.0
+        return min(1.0, float(step) / float(warmup_steps))
+
+    def _compute_foot_collision_penalty(self):
+        body_pos = self._rigid_body_pos[:, self._collision_body_ids, :]
+        body_vel_xy = self._rigid_body_vel[:, self._collision_body_ids, :2]
+        batch_size, num_feet, _ = body_pos.shape
+
+        speed = torch.linalg.norm(body_vel_xy, dim=-1)
+        direction = body_vel_xy / torch.clamp(speed.unsqueeze(-1), min=1e-6)
+        num_rays, num_distances = 5, 5
+        angles = torch.linspace(-self.collision_cone_deg,
+                                self.collision_cone_deg, num_rays,
+                                device=self.device) * (np.pi / 180.0)
+        cos_a = torch.cos(angles).view(1, 1, num_rays)
+        sin_a = torch.sin(angles).view(1, 1, num_rays)
+        dir_x, dir_y = direction[..., 0].unsqueeze(-1), direction[..., 1].unsqueeze(-1)
+        ray_direction = torch.stack(
+            [dir_x * cos_a - dir_y * sin_a,
+             dir_x * sin_a + dir_y * cos_a], dim=-1)
+        distances = torch.linspace(
+            self.collision_unsafe_distance / num_distances,
+            self.collision_unsafe_distance, num_distances, device=self.device)
+
+        sample_xy = (body_pos[..., :2].unsqueeze(2).unsqueeze(3)
+                     + ray_direction.unsqueeze(3)
+                     * distances.view(1, 1, 1, num_distances, 1))
+        sample_points = torch.zeros(
+            (batch_size, num_feet, num_rays, num_distances, 3),
+            device=self.device, dtype=body_pos.dtype)
+        sample_points[..., :2] = sample_xy
+        sampled_height = self._sample_static_terrain(
+            sample_points.view(batch_size, -1, 3)).view(
+                batch_size, num_feet, num_rays, num_distances)
+
+        base_height = self._sample_static_terrain(body_pos).view(
+            batch_size, num_feet, 1, 1)
+        previous_height = torch.cat(
+            [base_height.expand(-1, -1, num_rays, -1), sampled_height[..., :-1]],
+            dim=-1)
+        distance_step = self.collision_unsafe_distance / num_distances
+        local_slope = (sampled_height - previous_height) / distance_step
+        candidate = torch.logical_and(
+            sampled_height > base_height + self.collision_height_threshold,
+            local_slope > self.collision_slope_threshold)
+
+        candidate_distance = distances.view(1, 1, 1, num_distances).expand(
+            batch_size, num_feet, num_rays, num_distances)
+        masked_distance = torch.where(
+            candidate, candidate_distance,
+            torch.full_like(candidate_distance, float("inf")))
+        nearest_distance, nearest_idx = torch.min(
+            masked_distance.view(batch_size, num_feet, -1), dim=-1)
+        valid = torch.isfinite(nearest_distance)
+
+        flat_height = sampled_height.view(batch_size, num_feet, -1)
+        nearest_top = torch.gather(
+            flat_height, -1, nearest_idx.unsqueeze(-1)).squeeze(-1)
+        ray_idx = nearest_idx // num_distances
+        nearest_direction = torch.gather(
+            ray_direction, 2,
+            ray_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, 2)
+        ).squeeze(2)
+
+        approach_speed = torch.clamp(
+            torch.sum(body_vel_xy * nearest_direction, dim=-1), min=0.0)
+        distance_weight = torch.clamp(
+            1.0 - nearest_distance / self.collision_unsafe_distance,
+            min=0.0, max=1.0)
+        foot_bottom = body_pos[..., 2] + self._collision_bottom_offsets
+        height_gate = torch.sigmoid(
+            (nearest_top + self.collision_height_margin - foot_bottom)
+            / max(self.collision_height_softness, 1e-4))
+        normalized_speed = torch.clamp(
+            approach_speed / max(self.collision_speed_scale, 1e-4),
+            min=0.0, max=1.0)
+        risk = normalized_speed * distance_weight * height_gate
+        risk = torch.where(valid, risk, torch.zeros_like(risk))
+        return -torch.max(risk, dim=-1).values
+
+    def _compute_edge_stepping_penalty(self, root_pos, tar_pos):
+        foot_pos = self._rigid_body_pos[:, self._edge_foot_ids, :]
+        foot_rot = self._rigid_body_rot[:, self._edge_foot_ids, :]
+        batch_size, num_feet, _ = foot_pos.shape
+        num_grid = self._edge_local_grid.shape[0]
+
+        center_offsets = self._edge_center_offsets.view(1, num_feet, 3).expand(
+            batch_size, -1, -1)
+        foot_center = foot_pos + quat_apply(
+            foot_rot.reshape(-1, 4), center_offsets.reshape(-1, 3)
+        ).view(batch_size, num_feet, 3)
+        local_grid = self._edge_local_grid.view(1, 1, num_grid, 3).expand(
+            batch_size, num_feet, -1, -1)
+        grid_rot = foot_rot.unsqueeze(2).expand(-1, -1, num_grid, -1).reshape(-1, 4)
+        world_grid = foot_center.unsqueeze(2) + quat_apply(
+            grid_rot, local_grid.reshape(-1, 3)
+        ).view(batch_size, num_feet, num_grid, 3)
+        terrain_height = self._sample_static_terrain(
+            world_grid.view(batch_size, -1, 3)).view(
+                batch_size * num_feet, 1,
+                self._edge_grid_size, self._edge_grid_size)
+
+        padded_height = F.pad(terrain_height, (1, 1, 1, 1), mode="replicate")
+        grad_x = F.conv2d(padded_height, self._edge_sobel_x)
+        grad_y = F.conv2d(padded_height, self._edge_sobel_y)
+        grad_mag = torch.sqrt(grad_x * grad_x + grad_y * grad_y)
+        edge_weight = (grad_mag > self.edge_gradient_threshold).to(
+            terrain_height.dtype).view(batch_size, num_feet, num_grid)
+        edge_count = torch.sum(edge_weight, dim=-1)
+        has_edge = edge_count > 0
+        edge_centroid = torch.sum(
+            world_grid[..., :2] * edge_weight.unsqueeze(-1), dim=2
+        ) / torch.clamp(edge_count.unsqueeze(-1), min=1.0)
+        edge_vector = edge_centroid - foot_center[..., :2]
+
+        grad_x_mean = torch.sum(
+            grad_x.view(batch_size, num_feet, num_grid) * edge_weight,
+            dim=-1) / torch.clamp(edge_count, min=1.0)
+        grad_y_mean = torch.sum(
+            grad_y.view(batch_size, num_feet, num_grid) * edge_weight,
+            dim=-1) / torch.clamp(edge_count, min=1.0)
+        local_gradient = torch.stack(
+            [grad_x_mean, grad_y_mean, torch.zeros_like(grad_x_mean)], dim=-1)
+        world_gradient = quat_apply(
+            foot_rot.reshape(-1, 4), local_gradient.reshape(-1, 3)
+        ).view(batch_size, num_feet, 3)[..., :2]
+
+        command = tar_pos[..., :2] - root_pos[..., :2]
+        command = command / torch.clamp(
+            torch.linalg.norm(command, dim=-1, keepdim=True), min=1e-6)
+        command = command.unsqueeze(1).expand(-1, num_feet, -1)
+        sign_correction = -torch.sign(torch.sum(world_gradient * command, dim=-1))
+        edge_projection = torch.sum(edge_vector * command, dim=-1)
+        raw_edge = sign_correction * torch.minimum(
+            edge_projection, torch.zeros_like(edge_projection))
+        raw_edge = torch.minimum(raw_edge, torch.zeros_like(raw_edge))
+
+        center_ground = self._sample_static_terrain(foot_center).view(
+            batch_size, num_feet)
+        foot_clearance = torch.clamp(foot_center[..., 2] - center_ground, min=0.0)
+        height_weight = torch.clamp(
+            1.0 - foot_clearance / max(self.edge_activation_height, 1e-4),
+            min=0.0, max=1.0)
+        edge_penalty = torch.clamp(
+            raw_edge / max(self.edge_distance_scale, 1e-4),
+            min=-1.0, max=0.0) * height_weight
+        edge_penalty = torch.where(has_edge, edge_penalty,
+                                   torch.zeros_like(edge_penalty))
+        return torch.min(edge_penalty, dim=-1).values
 
     def _build_env(self, env_id, env_ptr, humanoid_asset):
         super()._build_env(env_id, env_ptr, humanoid_asset)
@@ -868,11 +1086,30 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         # power_reward = -0.00005 * (power ** 2)
         power_reward = -self.power_coefficient * power
 
+        collision_reward = torch.zeros_like(location_reward)
+        if self.enable_collision_penalty:
+            collision_scale = self._warmup_scale(
+                self._collision_reward_step,
+                self.collision_reward_warmup_steps)
+            collision_reward = (self.collision_reward_weight * collision_scale
+                                * self._compute_foot_collision_penalty())
+            self._collision_reward_step += 1
+
+        edge_reward = torch.zeros_like(location_reward)
+        if self.enable_edge_penalty:
+            edge_scale = self._warmup_scale(
+                self._edge_reward_step, self.edge_reward_warmup_steps)
+            edge_reward = (self.edge_reward_weight * edge_scale
+                           * self._compute_edge_stepping_penalty(root_pos, tar_pos))
+            self._edge_reward_step += 1
+
         if self.power_reward:
-            self.rew_buf[:] = location_reward + power_reward
+            self.rew_buf[:] = (location_reward + power_reward
+                               + collision_reward + edge_reward)
         else:
-            self.rew_buf[:] = location_reward
-        self.reward_raw[:] = torch.cat([location_reward[:, None], power_reward[:, None]], dim = -1)
+            self.rew_buf[:] = location_reward + collision_reward + edge_reward
+        self.reward_raw[:] = torch.stack(
+            [location_reward, power_reward, collision_reward, edge_reward], dim=-1)
 
         return
 
