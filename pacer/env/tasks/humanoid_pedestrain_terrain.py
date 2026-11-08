@@ -1056,15 +1056,25 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
         # TERRA: rotate the initial pose by a fixed yaw (relative).
         # NOTE: Isaac Gym stores quaternions as (x, y, z, w).
-        # stair_heading_mode == "straight" pins the body to +x so the robot faces
-        # the straight corridor it is about to walk along.
+        # stair_heading_mode == "straight" pins body +X to +x so the robot faces
+        # the straight corridor it is about to walk along. The motion clip has
+        # its own heading, and this rotation is *relative*, so the correction has
+        # to be computed per env: yaw_i = -heading_i(root_rot).
         straight_heading = getattr(self, "stair_heading_mode", "random") == "straight"
         if (flags.random_heading or getattr(flags, "start_yaw", None) is not None
                 or straight_heading):
             start_yaw = getattr(flags, "start_yaw", None)
             if start_yaw is None and straight_heading:
-                start_yaw = 0.0
-            if start_yaw is not None:
+                ex = torch_utils.my_quat_rotate(
+                    root_rot,
+                    torch.tensor([1.0, 0.0, 0.0], device=self.device,
+                                 dtype=root_rot.dtype).repeat(root_rot.shape[0], 1))
+                ang = torch.atan2(ex[:, 1], ex[:, 0])
+                half = -ang / 2.0
+                zero = torch.zeros(num_envs, device=self.device, dtype=root_rot.dtype)
+                random_heading_quat = torch.stack(
+                    [zero, zero, torch.sin(half), torch.cos(half)], dim=-1)
+            elif start_yaw is not None:
                 half = float(start_yaw) / 2.0
                 zero = torch.zeros(num_envs, device=self.device, dtype=root_rot.dtype)
                 cos_h = torch.full((num_envs,), float(np.cos(half)),
