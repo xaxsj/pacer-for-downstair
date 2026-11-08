@@ -2174,11 +2174,15 @@ class Terrain:
                         self.spawn_mask_raw[start_x:end_x,
                                             start_y:end_y] = spawn.astype(np.int8)
                     else:
-                        if choice < self.proportions[2]:
-                            step_height *= -1
+                        # Pyramid stairs. The old code negated the step height
+                        # for every tile in the first stair slot, so the slot
+                        # labelled "stairs up" actually descended. Decide the
+                        # direction from the slot instead (doc §7: 60% up).
+                        ascend = bool(choice < self.proportions[2])
                         pyramid_stairs_terrain(terrain,
                                                step_width=step_tread,
-                                               step_height=step_height,
+                                               step_height=(abs(step_height)
+                                                            if ascend else -abs(step_height)),
                                                platform_size=self.stair_platform_size)
                 elif choice < self.proportions[4]:
                     discrete_obstacles_terrain(terrain,

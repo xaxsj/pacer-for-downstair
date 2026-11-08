@@ -117,9 +117,9 @@ env:
     numLevels: 5
     numTerrains: 20
     # Stage 1 geometry (docs/安全奖励与万轮课程训练计划-20261108.md §7).
-    # Straight flights only: h / d / W / steps / platform / start distance are
-    # sampled per tile; W uses discrete bins, not a uniform range.
-    stair_terrain: straight
+    # Back to the pyramid ("inverted pyramid") terrain: with a random target path
+    # a straight corridor is not actually climbed, the robot just walks off it.
+    stair_terrain: pyramid
     stair_riser_min: 0.08
     stair_riser_max: 0.12
     stair_tread_min: 0.35
@@ -132,9 +132,9 @@ env:
     stair_platform_max: 2.0
     stair_start_dist_min: 0.4
     stair_start_dist_max: 0.8
-    stair_side_depth: 1.5      # pit outside the corridor, so W is a real width
+    stair_side_depth: 1.5      # only used by the straight generator
     stair_spawn_inset: 0.20
-    # Legacy pyramid knobs (only used when stair_terrain: pyramid).
+    # Pyramid top platform, in metres (this one is now really passed through).
     stair_platform_size: 1.5
     # Spawn on the straight-stair approach strip; the distance to the first
     # riser then equals stair_start_dist.
