@@ -97,7 +97,11 @@ env:
     numTerrains: 20
     stair_height_min: 0.10
     stair_height_max: 0.22
-    stair_tread_min: 0.24
+    # Tread floor raised 0.24 -> 0.28 m: the foot box is 0.2255 m long, so 0.24
+    # left only 1.5 cm of placement margin (one control step at 2.2 m/s is
+    # 7.3 cm). 0.28 gives 5.5 cm and keeps tread/foot >= 1.24, comparable to
+    # real stairs (1.08-1.20).
+    stair_tread_min: 0.28
     stair_tread_max: 0.38
     # Flat area at the top of each pyramid stair block, in metres. Shrinking it
     # from 3.0 to 1.0 shortens the run-up a robot can build before the first
