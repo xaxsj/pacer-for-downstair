@@ -71,12 +71,12 @@ env:
   edge_activation_height: 0.12
   edge_distance_scale: 0.12
 
-  # Terrain-aware target paths: start every new trajectory along the local
-  # uphill gradient instead of a random heading, and keep the path mostly
-  # straight (turn_scale damps the random waypoint turns). Without this the
-  # robot wanders and never actually approaches a stair.
-  stair_heading_mode: uphill      # random | uphill | downhill
-  stair_path_turn_scale: 0.20
+  # Target path: "straight" pins both the body heading and the trajectory to +x,
+  # i.e. a fixed straight line along the corridor centre (doc §15). "uphill" /
+  # "downhill" follow the local terrain gradient instead; "random" is the old
+  # behaviour.
+  stair_heading_mode: straight    # random | uphill | downhill | straight
+  stair_path_turn_scale: 0.0
   stair_heading_probe: 0.30       # metres used to measure the gradient
 
   has_shape_obs: True
@@ -124,34 +124,40 @@ env:
     mapWidth: 20.
     numLevels: 5
     numTerrains: 20
-    # Stage 1 geometry (docs/安全奖励与万轮课程训练计划-20261108.md §7).
-    # Back to the pyramid ("inverted pyramid") terrain: with a random target path
-    # a straight corridor is not actually climbed, the robot just walks off it.
-    stair_terrain: pyramid
+    # Stage 1 geometry (docs/安全奖励与万轮课程训练计划-20261108.md §15).
+    # Each env gets one straight corridor: up-stairs -> platform -> down-stairs,
+    # with per-tile randomised h / d / W / step counts / platform / D_start,
+    # and a fixed straight path along the corridor centre line.
+    stair_terrain: flat_flight
     stair_riser_min: 0.08
     stair_riser_max: 0.12
     stair_tread_min: 0.35
     stair_tread_max: 0.42
     stair_width_bins: [3.0, 2.8, 2.4]
     stair_width_probs: [0.25, 0.45, 0.30]
-    stair_steps_min: 5
-    stair_steps_max: 7
+    stair_up_steps_min: 5
+    stair_up_steps_max: 7
+    stair_down_steps_min: 5
+    stair_down_steps_max: 7
     stair_platform_min: 1.5
     stair_platform_max: 2.0
     stair_start_dist_min: 0.4
     stair_start_dist_max: 0.8
-    stair_side_depth: 1.5      # only used by the straight generator
+    stair_approach_buf: 1.0
+    stair_runout: 2.0
+    stair_side_depth: 1.5      # pit outside the corridor, so W is a real width
     stair_spawn_inset: 0.20
-    # Pyramid top platform, in metres (this one is now really passed through).
+    # Legacy pyramid knobs (only used when stair_terrain: pyramid).
+    stair_steps_min: 5
+    stair_steps_max: 7
     stair_platform_size: 1.5
-    # Spawn on the straight-stair approach strip; the distance to the first
-    # riser then equals stair_start_dist.
     stair_spawn_bias: 1.0
     stair_spawn_window: 0.5
     stair_spawn_min_spread: 0.05
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
-    # Stage 1: 60% up, 25% down, 15% flat; no slopes in any stage (doc §0).
-    terrainProportions: [0.0, 0.0, 0.60, 0.25, 0.0, 0.0, 0.0, 0.15]
+    # Every tile is a flat-flight corridor (it already contains up + platform +
+    # down), so the whole budget goes to the stair slot; no slopes anywhere.
+    terrainProportions: [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     # terrainProportions: [0, 0, 0, 0., 0., 0., 1, 0]
     # terrainProportions: [0, 0, 0, 0, 0, 0., 0, 1]
     # tri mesh only:

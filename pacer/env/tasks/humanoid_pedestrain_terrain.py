@@ -1016,10 +1016,16 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         if not flags.server_mode:
             root_pos = self._humanoid_root_states[env_ids, 0:3]
             headings = None
+            turn_scale = self.stair_path_turn_scale
             if self.stair_heading_mode in ("uphill", "downhill"):
                 headings = self._terrain_gradient_heading(root_pos)
+            elif self.stair_heading_mode == "straight":
+                # Fixed straight path along +x, matching the flat-flight corridor.
+                headings = torch.zeros(root_pos.shape[0], device=root_pos.device,
+                                       dtype=root_pos.dtype)
+                turn_scale = 0.0
             self._traj_gen.reset(env_ids, root_pos, init_heading=headings,
-                                 turn_scale=self.stair_path_turn_scale)
+                                 turn_scale=turn_scale)
         return
 
 
@@ -1050,8 +1056,14 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
         # TERRA: rotate the initial pose by a fixed yaw (relative).
         # NOTE: Isaac Gym stores quaternions as (x, y, z, w).
-        if flags.random_heading or getattr(flags, "start_yaw", None) is not None:
+        # stair_heading_mode == "straight" pins the body to +x so the robot faces
+        # the straight corridor it is about to walk along.
+        straight_heading = getattr(self, "stair_heading_mode", "random") == "straight"
+        if (flags.random_heading or getattr(flags, "start_yaw", None) is not None
+                or straight_heading):
             start_yaw = getattr(flags, "start_yaw", None)
+            if start_yaw is None and straight_heading:
+                start_yaw = 0.0
             if start_yaw is not None:
                 half = float(start_yaw) / 2.0
                 zero = torch.zeros(num_envs, device=self.device, dtype=root_rot.dtype)
@@ -1587,6 +1599,78 @@ def straight_stairs_terrain(terrain, step_width, step_height, stair_width,
     return walk, spawn
 
 
+def flat_flight_terrain(terrain, step_width, step_height, stair_width,
+                        up_steps, down_steps, platform_len=1.5,
+                        start_dist=0.6, approach_buf=1.0, runout_len=2.0,
+                        side_depth=1.5, spawn_inset=0.20):
+    """One straight corridor containing  up-stairs -> platform -> down-stairs.
+
+    Layout along +x (the walking direction):
+
+        [0, approach_buf)            flat buffer (spawn strip at its end)
+        [.., + start_dist)           flat approach
+        up_steps   steps of step_width x step_height      (rises to H)
+        platform_len at H
+        down_steps steps                                  (falls back to 0)
+        runout_len flat
+        beyond                       pit
+
+    The corridor is ``stair_width`` metres clear in y; everything outside is a
+    pit ``side_depth`` metres deep, so W changes the collision mesh and the
+    walkable area.  Returns (walk, spawn) boolean masks.
+    """
+    hs, vs = terrain.horizontal_scale, terrain.vertical_scale
+    n_rows, n_cols = terrain.height_field_raw.shape
+
+    step_w = max(int(round(step_width / hs)), 1)
+    step_h = int(round(step_height / vs))
+    buf_px = max(int(round(approach_buf / hs)), 1)
+    first_px = max(buf_px + int(round(start_dist / hs)), buf_px + 1)
+    half_w = max(int(round(stair_width / 2.0 / hs)), 1)
+    plat_px = max(int(round(platform_len / hs)), 0)
+    runout_px = max(int(round(runout_len / hs)), 0)
+    pit = -int(round(side_depth / vs))
+
+    cy = n_cols // 2
+    y0 = max(cy - half_w, 0)
+    y1 = min(cy + half_w, n_cols)
+    top_h = up_steps * step_h
+
+    hf = terrain.height_field_raw
+    hf[:] = pit
+    walk = np.zeros(hf.shape, dtype=bool)
+    spawn = np.zeros(hf.shape, dtype=bool)
+
+    # flat floor for the whole corridor, steps are carved below
+    hf[:, y0:y1] = 0
+    walk[:, y0:y1] = True
+
+    x = first_px
+    for i in range(up_steps):
+        hf[x:x + step_w, y0:y1] = (i + 1) * step_h
+        x += step_w
+    top_end = min(x + plat_px, n_rows)
+    hf[x:top_end, y0:y1] = top_h
+    x = top_end
+    for i in range(down_steps):
+        hf[x:x + step_w, y0:y1] = top_h - (i + 1) * step_h
+        x += step_w
+    end = min(x + runout_px, n_rows)
+    hf[x:end, y0:y1] = 0
+
+    # past the run-out everything is a pit again
+    hf[end:, :] = pit
+    walk[end:, :] = False
+
+    # spawn strip at the end of the buffer, inset from both corridor edges
+    strip = max(min(int(round(0.10 / hs)), buf_px), 1)
+    inset = int(round(spawn_inset / hs))
+    sy0 = min(y0 + inset, y1 - 1)
+    sy1 = max(y1 - inset, sy0 + 1)
+    spawn[buf_px - strip:buf_px, sy0:sy1] = True
+    return walk, spawn
+
+
 def poles_terrain(terrain, difficulty=1):
     """
     Generate stairs
@@ -1834,6 +1918,12 @@ class Terrain:
                                                 cfg.get("stair_platform_size", 3.0)))
         self.stair_start_dist_min = float(cfg.get("stair_start_dist_min", 0.4))
         self.stair_start_dist_max = float(cfg.get("stair_start_dist_max", 0.8))
+        self.stair_up_steps_min = int(cfg.get("stair_up_steps_min", 5))
+        self.stair_up_steps_max = int(cfg.get("stair_up_steps_max", 7))
+        self.stair_down_steps_min = int(cfg.get("stair_down_steps_min", 5))
+        self.stair_down_steps_max = int(cfg.get("stair_down_steps_max", 7))
+        self.stair_approach_buf = float(cfg.get("stair_approach_buf", 1.0))
+        self.stair_runout = float(cfg.get("stair_runout", 2.0))
         self.stair_side_depth = float(cfg.get("stair_side_depth", 1.5))
         # Lateral inset from the corridor edge used for the spawn strip (doc
         # §6.1: at least 95% of spawns must be 0.20 m inside the edge).
@@ -2180,7 +2270,35 @@ class Terrain:
                                            step=0.025,
                                            downsampled_scale=0.2)
                 elif choice < self.proportions[3]:
-                    if self.stair_terrain == "straight":
+                    if self.stair_terrain == "flat_flight":
+                        # up stairs -> platform -> down stairs, one straight line
+                        width_i = self._sample_stair_width()
+                        up_i = int(np.random.randint(self.stair_up_steps_min,
+                                                     self.stair_up_steps_max + 1))
+                        down_i = int(np.random.randint(self.stair_down_steps_min,
+                                                       self.stair_down_steps_max + 1))
+                        start_i = float(np.random.uniform(self.stair_start_dist_min,
+                                                          self.stair_start_dist_max))
+                        plat_i = float(np.random.uniform(self.stair_platform_min,
+                                                         self.stair_platform_max))
+                        walk, spawn = flat_flight_terrain(
+                            terrain,
+                            step_width=step_tread,
+                            step_height=abs(step_height),
+                            stair_width=width_i,
+                            up_steps=up_i,
+                            down_steps=down_i,
+                            platform_len=plat_i,
+                            start_dist=start_i,
+                            approach_buf=self.stair_approach_buf,
+                            runout_len=self.stair_runout,
+                            side_depth=self.stair_side_depth,
+                            spawn_inset=self.stair_spawn_inset)
+                        self.walkable_field_raw[start_x:end_x,
+                                                start_y:end_y] = (~walk).astype(int)
+                        self.spawn_mask_raw[start_x:end_x,
+                                            start_y:end_y] = spawn.astype(np.int8)
+                    elif self.stair_terrain == "straight":
                         # h / d / W / steps / platform / start distance are all
                         # randomised per tile (doc §7: no uniform-only width).
                         width_i = self._sample_stair_width()
