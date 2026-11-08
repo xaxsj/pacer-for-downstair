@@ -31,13 +31,20 @@ env:
   real_weight: True
   power_reward: True
 
-  # Dense unsafe-stepping rewards. Collision is enabled first; edge remains
-  # independently switchable until its ascent/descent sign is validated.
+  # Bounded terrain-aware task reward.  All terms share one 500-epoch ramp.
+  enable_safe_stepping_reward: true
+  enable_velocity_reward: true
   enable_collision_penalty: true
   enable_edge_penalty: false
   collision_reward_weight: 0.20
+  landing_reward_weight: 0.15
+  impact_reward_weight: 0.05
+  velocity_reward_weight: 0.10
+  velocity_error_scale: 2.0
+  safe_reward_clip: 0.25
+  safe_reward_warmup_steps: 16000  # 500 PPO epochs x horizon 32
   edge_reward_weight: 0.10
-  collision_reward_warmup_steps: 16000  # 500 PPO epochs x horizon 32
+  collision_reward_warmup_steps: 16000  # legacy single-term fallback
   edge_reward_warmup_steps: 16000
   collision_unsafe_distance: 0.20
   collision_cone_deg: 30.0
@@ -46,6 +53,20 @@ env:
   collision_height_margin: 0.04
   collision_height_softness: 0.015
   collision_speed_scale: 1.0
+  collision_speed_floor: 0.25
+  crossing_height_threshold: 0.025
+  foot_clearance_low: 0.02
+  foot_clearance_high: 0.06
+  leg_clearance_low: 0.03
+  leg_clearance_high: 0.10
+  foot_contact_force_threshold: 10.0
+  impact_force_free: 20.0
+  impact_force_saturation: 150.0
+  knee_termination_force: 150.0
+  knee_contact_frames: 3
+  critical_contact_force: 50.0
+  fall_tilt_deg: 45.0
+  fall_torso_height: 0.45
   edge_gradient_threshold: 0.04
   edge_activation_height: 0.12
   edge_distance_scale: 0.12
