@@ -216,6 +216,11 @@ def main():
     flags.auto_record = getattr(args, "auto_record", False)
     flags.record_frames = getattr(args, "record_frames", 300)
 
+    # TERRA: 奖励分项监控（导出 CSV 供分析）
+    flags.reward_debug = getattr(args, "reward_debug", False)
+    flags.reward_debug_steps = getattr(args, "reward_debug_steps", 600)
+    flags.reward_debug_out = getattr(args, "reward_debug_out", "")
+
     # TERRA: 固定出生点（--start_xy "x,y"）
     start_xy = getattr(args, "start_xy", "") or ""
     if start_xy:

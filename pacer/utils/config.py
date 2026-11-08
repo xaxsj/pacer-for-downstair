@@ -433,6 +433,24 @@ def get_args(benchmark=False):
             "help": "how many control steps to record with --auto_record"
         },
         {
+            "name": "--reward_debug",
+            "action": "store_true",
+            "default": False,
+            "help": "accumulate per-term reward statistics and dump a CSV"
+        },
+        {
+            "name": "--reward_debug_steps",
+            "type": int,
+            "default": 600,
+            "help": "control steps to accumulate with --reward_debug"
+        },
+        {
+            "name": "--reward_debug_out",
+            "type": str,
+            "default": "",
+            "help": "CSV path for --reward_debug (default output/reward_debug.csv)"
+        },
+        {
             "name": "--start_xy",
             "type": str,
             "default": "",

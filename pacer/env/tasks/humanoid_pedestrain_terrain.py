@@ -138,6 +138,22 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.reward_raw = torch.zeros((self.num_envs, 7)).to(self.device)
         self._build_safe_stepping_tensors()
 
+        # Reward decomposition monitor (--reward_debug): per-term batch means are
+        # accumulated on the GPU and dumped to CSV after N control steps.
+        self.reward_debug_names = [
+            "location", "power", "velocity_raw", "velocity_weighted",
+            "swing_raw", "landing_raw", "impact_raw", "safety_clipped",
+            "edge", "task_total",
+        ]
+        self.reward_debug_on = bool(getattr(flags, "reward_debug", False))
+        self._rwdbg_sum = None
+        self._rwdbg_sq = None
+        self._rwdbg_n = 0
+        self._rwdbg_done = False
+        if self.reward_debug_on:
+            print("[reward_debug] enabled, "
+                  f"{int(getattr(flags, 'reward_debug_steps', 600))} steps")
+
         if (not self.headless) and self.show_sensors:
             self._build_sensor_state_tensors()
 
@@ -1530,6 +1546,52 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.reward_raw[:] = torch.stack(
             [location_reward, power_reward, velocity_reward, swing_reward,
              landing_reward, impact_reward, safety_reward], dim=-1)
+
+        if self.reward_debug_on and not self._rwdbg_done:
+            self._accumulate_reward_debug(
+                location_reward, power_reward, velocity_reward,
+                new_reward_scale * self.velocity_reward_weight * velocity_reward,
+                swing_reward, landing_reward, impact_reward,
+                safety_reward, edge_reward, self.rew_buf)
+
+        return
+
+    def _accumulate_reward_debug(self, *terms):
+        """Accumulate per-term batch means; dump a CSV once the step budget is met."""
+        vec = torch.stack([t.detach().float().mean() for t in terms])
+        if self._rwdbg_sum is None:
+            self._rwdbg_sum = vec.clone()
+            self._rwdbg_sq = vec * vec
+        else:
+            self._rwdbg_sum += vec
+            self._rwdbg_sq += vec * vec
+        self._rwdbg_n += 1
+        if self._rwdbg_n >= int(getattr(flags, "reward_debug_steps", 600)):
+            self._dump_reward_debug()
+
+    def _dump_reward_debug(self):
+        import csv
+        import os
+
+        n = max(self._rwdbg_n, 1)
+        mean = (self._rwdbg_sum / n).cpu().numpy()
+        var = (self._rwdbg_sq / n - (self._rwdbg_sum / n) ** 2).clamp(min=0.0)
+        std = torch.sqrt(var).cpu().numpy()
+        out = getattr(flags, "reward_debug_out", "") or "output/reward_debug.csv"
+        out_dir = os.path.dirname(out)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        total = float(np.abs(mean).sum()) + 1e-12
+        with open(out, "w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["term", "mean", "std", "abs_share"])
+            for i, name in enumerate(self.reward_debug_names):
+                writer.writerow([name, f"{mean[i]:.6f}", f"{std[i]:.6f}",
+                                 f"{abs(mean[i]) / total:.4f}"])
+        print(f"[reward_debug] {n} steps -> {out}")
+        for i, name in enumerate(self.reward_debug_names):
+            print(f"  {name:18s} mean {mean[i]:+.4f}  std {std[i]:.4f}")
+        self._rwdbg_done = True
 
         return
 
