@@ -1676,15 +1676,18 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf,
         force_threshold = 200
         body_contact_force = torch.sqrt(torch.square(torch.abs(masked_contact_buf.sum(dim=-2))).sum(dim=-1)) > force_threshold
 
-        # body_height = rigid_body_pos[..., 2]
-        # body_height -= center_height
+        # (A) restore the upstream fall test: a body counts as fallen only if it
+        # is in contact AND its height above the local terrain is below that
+        # body's termination height. With the contact-only rule a shin/knee
+        # grazing a 0.15 m riser edge (300-400 N while standing upright) ended
+        # the episode, so stair climbing could never be learned.
+        body_height = rigid_body_pos[..., 2] - center_height
 
-        # fall_height = body_height < termination_heights
-        # fall_height[:, contact_body_ids] = False
-        # fall_height = torch.any(fall_height, dim=-1)
+        fall_height = body_height < termination_heights
+        fall_height[:, contact_body_ids] = False
+        fall_height = torch.any(fall_height, dim=-1)
 
-        # has_fallen = torch.logical_and(body_contact_force, fall_height)
-        has_fallen = body_contact_force
+        has_fallen = torch.logical_and(body_contact_force, fall_height)
         # first timestep can sometimes still have nonzero contact forces
         # so only check after first couple of steps
         has_fallen *= (progress_buf > 1)
