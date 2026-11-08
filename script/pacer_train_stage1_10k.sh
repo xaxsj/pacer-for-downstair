@@ -3,18 +3,18 @@ set -euo pipefail
 source /data/ljx/scripts/pacer_env.sh
 cd "$PACER_ROOT"
 
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-7}"
-MAX_ITERATIONS="${MAX_ITERATIONS:-59700}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-51250}"
 
-OUT=output/exp/pacer_stage1_10k
+OUT="${OUT:-output/exp/pacer_safe_initial_10k}"
 mkdir -p "$OUT"
 if [ ! -f "$OUT/Humanoid.pth" ]; then
   cp output/release/pacer/Humanoid.pth "$OUT/Humanoid.pth"
 fi
 
-# Resume the latest checkpoint (currently epoch 49,700) and run the revised
-# bounded safety curriculum for 10,000 additional epochs.  Override
-# MAX_ITERATIONS when resuming a checkpoint with a different epoch number.
+# Start from the official PACER checkpoint at epoch 41,250 and run at most
+# 10,000 additional epochs.  Stage 1 should override MAX_ITERATIONS=42750;
+# later stages resume the same experiment with their corresponding configs.
 # There is deliberately no wall-clock timeout: stop only at the epoch target.
 python pacer/run.py \
   --task HumanoidPedestrianTerrain \
