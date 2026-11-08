@@ -51,6 +51,8 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.sensor_res = cfg["env"].get("sensor_res", 32)
         self.power_reward = cfg["env"].get("power_reward", False)
         self.power_coefficient = cfg["env"].get("power_coefficient", 0.0005)
+        self.location_reward_weight = float(
+            cfg["env"].get("location_reward_weight", 1.0))
         self.fuzzy_target = cfg["env"].get("fuzzy_target", False)
 
         # Terrain-aware target paths: instead of a random heading, start the
@@ -91,7 +93,8 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.leg_clearance_low = float(cfg["env"].get("leg_clearance_low", 0.03))
         self.leg_clearance_high = float(cfg["env"].get("leg_clearance_high", 0.10))
         self.crossing_height_threshold = float(cfg["env"].get("crossing_height_threshold", 0.025))
-        self.foot_contact_force_threshold = float(cfg["env"].get("foot_contact_force_threshold", 10.0))
+        self.foot_contact_force_threshold = float(cfg["env"].get("foot_contact_force_threshold", 60.0))
+        self.touchdown_min_frames = int(cfg["env"].get("touchdown_min_frames", 2))
         self.impact_force_free = float(cfg["env"].get("impact_force_free", 20.0))
         self.impact_force_saturation = float(cfg["env"].get("impact_force_saturation", 150.0))
         self.knee_termination_force = float(cfg["env"].get("knee_termination_force", 150.0))
@@ -99,6 +102,21 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.critical_contact_force = float(cfg["env"].get("critical_contact_force", 50.0))
         self.fall_tilt_deg = float(cfg["env"].get("fall_tilt_deg", 45.0))
         self.fall_torso_height = float(cfg["env"].get("fall_torso_height", 0.45))
+
+        # Corridor episode: reach the far end -> bonus + reset; drop below the
+        # spawn level -> fall + reset (the pit floor is otherwise walkable, which
+        # lets the policy leave the stairs and keep collecting location reward).
+        self.stair_goal_termination = bool(cfg["env"].get("stair_goal_termination", True))
+        self.success_bonus = float(cfg["env"].get("success_bonus", 5.0))
+        # Only a real drop onto the pit floor (>= fall_off_drop below the spawn
+        # level) counts as "left the route". A stumble down a few steps is a
+        # normal failure and gets no extra penalty -- that is what to learn.
+        self.fall_off_drop = float(cfg["env"].get("fall_off_drop", 1.2))
+        self.off_route_penalty = float(cfg["env"].get("off_route_penalty", -5.0))
+        self._episode_goal_x = torch.zeros(self.num_envs, device=self.device)
+        self._episode_spawn_z = torch.zeros(self.num_envs, device=self.device)
+        self._goal_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self._falloff_buf = torch.zeros_like(self._goal_buf)
         self.edge_gradient_threshold = float(cfg["env"].get("edge_gradient_threshold", 0.04))
         self.edge_activation_height = float(cfg["env"].get("edge_activation_height", 0.12))
         self.edge_distance_scale = float(cfg["env"].get("edge_distance_scale", 0.12))
@@ -205,6 +223,9 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
         self._previous_foot_contact = torch.zeros(
             (self.num_envs, 2), dtype=torch.bool, device=self.device)
+        # consecutive contact frames per foot, used to debounce touchdown events
+        self._contact_frames = torch.zeros(
+            (self.num_envs, 2), dtype=torch.long, device=self.device)
         self._previous_foot_ground = torch.zeros(
             (self.num_envs, 2), dtype=torch.float32, device=self.device)
         self._swing_crossed_edge = torch.zeros(
@@ -376,8 +397,9 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         quality = (0.45 * support.view(batch_size, num_feet)
                    + 0.35 * margin.view(batch_size, num_feet)
                    + 0.20 * impact_quality)
-        event_count = touchdown.to(quality.dtype).sum(dim=-1).clamp_min(1.0)
-        return (quality * touchdown.to(quality.dtype)).sum(dim=-1) / event_count
+        # Sum (not mean) over the feet that touched down: averaging let a gait
+        # with many brief contacts farm the same reward per step.
+        return (quality * touchdown.to(quality.dtype)).sum(dim=-1)
 
     def _compute_safe_stepping_terms(self, root_pos, tar_pos):
         foot_contact = self._foot_contact_state()
@@ -400,7 +422,18 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
             reset_mask, torch.zeros_like(self._knee_contact_count),
             self._knee_contact_count)
         swing = ~foot_contact
-        touchdown = foot_contact & ~self._previous_foot_contact & ~reset_mask
+        # Debounce: a touchdown only counts once contact has persisted
+        # touchdown_min_frames consecutive frames. Force chatter around the
+        # contact threshold would otherwise turn one landing into 2-3 events
+        # (measured landing_raw 0.15/step vs ~0.05 expected for a clean gait).
+        self._contact_frames = torch.where(
+            reset_mask,
+            torch.zeros_like(self._contact_frames),
+            torch.where(foot_contact,
+                        self._contact_frames + 1,
+                        torch.zeros_like(self._contact_frames)))
+        touchdown = (self._contact_frames == self.touchdown_min_frames) \
+            & ~reset_mask
 
         ankle_pos = self._rigid_body_pos[:, self._edge_foot_ids, :]
         ankle_ground = self._sample_static_terrain(ankle_pos)
@@ -465,7 +498,11 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         dense_risk = (0.60 * foot_risk + 0.40 * leg_risk).max(dim=-1).values
         swing_reward = torch.clamp(
             positive_event - dense_risk, min=-1.0, max=1.0)
-        landing_reward = self._compute_landing_quality(touchdown)
+        # Only stair landings count: the touchdown must be the first contact
+        # after a swing that crossed a step edge. Flat-ground walking used to
+        # collect the same ~0.15/step from every footfall, i.e. the term was
+        # rewarding step frequency rather than landing quality.
+        landing_reward = self._compute_landing_quality(valid_touchdown)
 
         foot_force = torch.linalg.norm(
             self._contact_forces[:, self._collision_body_ids, :], dim=-1
@@ -1173,6 +1210,29 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         rb_pos[..., 0:2] += diff_xy[:, None, :]
         key_pos[..., 2] += center_height[:, None]
 
+        # Episode goal: the far end of this env's corridor (first point ahead of
+        # the spawn whose terrain is clearly below the corridor floor, i.e. the
+        # pit after the down flight). Reaching it ends the episode with a bonus;
+        # dropping below the spawn level is a fall.
+        if self.stair_goal_termination:
+            self._episode_goal_x[env_ids] = self._corridor_goal_x(root_pos)
+            self._episode_spawn_z[env_ids] = root_pos[:, 2]
+            if not getattr(self, "_goal_printed", False) and root_pos.shape[0] > 0:
+                print(f"[goal] env0 spawn=({float(root_pos[0, 0]):.2f},"
+                      f"{float(root_pos[0, 1]):.2f}) z={float(root_pos[0, 2]):.2f} "
+                      f"goal_x={float(self._episode_goal_x[env_ids][0]):.2f} "
+                      f"fwd={float(self._episode_goal_x[env_ids][0] - root_pos[0, 0]):.2f} m",
+                      flush=True)
+                probe = torch.arange(0.0, 12.01, 0.5, device=self.device,
+                                     dtype=root_pos.dtype)
+                pts = root_pos[0:1, None, :].repeat(1, probe.shape[0], 1)
+                pts[..., 0] += probe[None]
+                prof = self._sample_static_terrain(pts)[0]
+                print("[goal] height profile (x offset -> h): "
+                      + " ".join(f"{float(o):.1f}:{float(v):.2f}"
+                                 for o, v in zip(probe, prof)), flush=True)
+                self._goal_printed = True
+
         self._set_env_state(env_ids=env_ids,
                             root_pos=root_pos,
                             root_rot=root_rot,
@@ -1441,6 +1501,33 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
                                    tm_params)
         self.height_samples = torch.tensor(self.terrain.heightsamples).view(self.terrain.tot_rows, self.terrain.tot_cols).to(self.device)
 
+    def _corridor_goal_x(self, root_pos, reach=16.0, step=0.25,
+                         floor_tol=0.05, margin=0.35):
+        """x where the down flight lands back on the corridor floor.
+
+        The old version put the goal at the end of the 2 m run-out, so a robot
+        that climbed up, crossed the platform and descended -- i.e. completed
+        the staircase -- still had to walk 2 more metres on the flat before it
+        counted, and timed out standing at the bottom of the last step.
+        """
+        offsets = torch.arange(step, reach + step, step,
+                               device=self.device, dtype=root_pos.dtype)
+        pts = root_pos[:, None, :].repeat(1, offsets.shape[0], 1)
+        pts[..., 0] += offsets[None]
+        h = self._sample_static_terrain(pts)
+        h0 = self._sample_static_terrain(root_pos[:, None, :])[:, 0]
+
+        # the robot must climb first (peak = top platform), then come back down
+        peak_idx = h.argmax(dim=-1)
+        idx_range = torch.arange(h.shape[1], device=self.device)[None, :]
+        below = h < (h0 + floor_tol)[:, None]
+        landed = below & (idx_range > peak_idx[:, None])
+        any_landed = landed.any(dim=-1)
+        idx = torch.argmax(landed.to(torch.int64), dim=-1)
+        idx = torch.where(any_landed, idx,
+                          torch.full_like(idx, offsets.shape[0] - 1))
+        return root_pos[:, 0] + offsets[idx] + margin
+
     def _compute_reset(self):
         env_ids = torch.arange(self.num_envs,
                                device=self.device,
@@ -1469,6 +1556,9 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         torso_low = (chest[:, 2] - center_height.squeeze(-1)) \
             < self.fall_torso_height
         safety_failure = critical_contact | knee_failure | torso_tilted | torso_low
+        if self.stair_goal_termination:
+            # _compute_reward ran first this step and set both flags
+            safety_failure = safety_failure | self._goal_buf | self._falloff_buf
 
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(
             self.reset_buf, self.progress_buf, self._rigid_body_pos, tar_pos,
@@ -1486,6 +1576,9 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
             location_reward = compute_location_reward_fuzzy(root_pos, tar_pos)
         else:
             location_reward = compute_location_reward(root_pos, tar_pos)
+        # Location is the dominant progress signal; the raw exponential kernel
+        # only reaches ~0.17 in practice, so it is scaled explicitly.
+        location_reward = self.location_reward_weight * location_reward
 
         power = torch.abs(torch.multiply(self.dof_force_tensor, self._dof_vel)).sum(dim = -1)
         power_reward = -self.power_coefficient * power
@@ -1543,6 +1636,22 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
                                + safety_reward + edge_reward)
         if self.enable_safe_stepping_reward or self.enable_velocity_reward:
             self._safe_reward_step += 1
+
+        if self.stair_goal_termination:
+            root_xyz = self._humanoid_root_states[:, 0:3]
+            self._goal_buf = root_xyz[:, 0] >= self._episode_goal_x
+            self._falloff_buf = (root_xyz[:, 2]
+                                 < self._episode_spawn_z - self.fall_off_drop)
+            if self.success_bonus != 0.0:
+                self.rew_buf += self.success_bonus * self._goal_buf.to(
+                    self.rew_buf.dtype)
+            # Leaving the route (ending up on the pit floor) is penalised; a
+            # stumble/fall while attempting the stairs is not (it is the skill
+            # being learned, and the episode already ends by the safety rules).
+            if self.off_route_penalty != 0.0:
+                self.rew_buf += self.off_route_penalty * self._falloff_buf.to(
+                    self.rew_buf.dtype)
+
         self.reward_raw[:] = torch.stack(
             [location_reward, power_reward, velocity_reward, swing_reward,
              landing_reward, impact_reward, safety_reward], dim=-1)
@@ -1572,6 +1681,7 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
     def _dump_reward_debug(self):
         import csv
         import os
+        import sys
 
         n = max(self._rwdbg_n, 1)
         mean = (self._rwdbg_sum / n).cpu().numpy()
@@ -1592,6 +1702,10 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         for i, name in enumerate(self.reward_debug_names):
             print(f"  {name:18s} mean {mean[i]:+.4f}  std {std[i]:.4f}")
         self._rwdbg_done = True
+        # Mirror _dump_auto_record: the probe is done, stop the process so the
+        # driver script returns immediately instead of training to max_epochs.
+        sys.stdout.flush()
+        os._exit(0)
 
         return
 

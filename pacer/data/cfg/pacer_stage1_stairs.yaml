@@ -30,22 +30,38 @@ env:
   kp_scale: 1
   real_weight: True
   power_reward: True
+  # Weighted so that, after warmup, the per-step contributions land near:
+  #   location 0.40-0.45 | velocity 0.15-0.20 | power -0.03..-0.05 | safety +-0.03
+  # The measured baseline (release policy) had location +0.166, power -0.175
+  # and a task total of -0.008, i.e. the progress signal cancelled out.
+  location_reward_weight: 1.3
+  power_coefficient: 0.00012
 
-  # Bounded terrain-aware task reward.  All terms share one 500-epoch ramp.
+  # Corridor episode: reach the end of the down flight -> +success_bonus and
+  # reset; end up on the pit floor (>= 1.2 m below the spawn) -> +off_route
+  # penalty and reset. A stumble or fall on the stairs gets no extra penalty:
+  # that is the behaviour being learned.
+  stair_goal_termination: true
+  success_bonus: 5.0
+  fall_off_drop: 1.2
+  off_route_penalty: -5.0
+
+  # Bounded terrain-aware task reward. All new terms share one ramp (4000 steps
+  # = 125 PPO epochs; the old 16000 left the first third of Stage 1 reward-free).
   enable_safe_stepping_reward: true
   enable_velocity_reward: true
   enable_collision_penalty: true
   enable_edge_penalty: false
-  collision_reward_weight: 0.20
-  landing_reward_weight: 0.15
+  collision_reward_weight: 0.25
+  landing_reward_weight: 0.40
   impact_reward_weight: 0.05
-  velocity_reward_weight: 0.10
+  velocity_reward_weight: 0.35
   velocity_error_scale: 2.0
-  safe_reward_clip: 0.25
-  safe_reward_warmup_steps: 16000  # 500 PPO epochs x horizon 32
+  safe_reward_clip: 0.30
+  safe_reward_warmup_steps: 4000   # 125 PPO epochs x horizon 32
   edge_reward_weight: 0.10
-  collision_reward_warmup_steps: 16000  # legacy single-term fallback
-  edge_reward_warmup_steps: 16000
+  collision_reward_warmup_steps: 4000  # legacy single-term fallback
+  edge_reward_warmup_steps: 4000
   collision_unsafe_distance: 0.20
   collision_cone_deg: 30.0
   collision_height_threshold: 0.03
@@ -59,7 +75,8 @@ env:
   foot_clearance_high: 0.06
   leg_clearance_low: 0.03
   leg_clearance_high: 0.10
-  foot_contact_force_threshold: 10.0
+  foot_contact_force_threshold: 60.0
+  touchdown_min_frames: 2
   impact_force_free: 20.0
   impact_force_saturation: 150.0
   knee_termination_force: 150.0
@@ -188,3 +205,4 @@ sim:
   flex:
     num_inner_iterations: 10
     warm_start: 0.25
+
