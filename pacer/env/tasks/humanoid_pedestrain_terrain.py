@@ -53,6 +53,14 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.power_coefficient = cfg["env"].get("power_coefficient", 0.0005)
         self.fuzzy_target = cfg["env"].get("fuzzy_target", False)
 
+        # Terrain-aware target paths: instead of a random heading, start the
+        # trajectory along the local terrain gradient (doc: the robot must
+        # actually approach the stairs, not wander).
+        #   stair_heading_mode: "random" | "uphill" | "downhill"
+        self.stair_heading_mode = str(cfg["env"].get("stair_heading_mode", "random"))
+        self.stair_path_turn_scale = float(cfg["env"].get("stair_path_turn_scale", 1.0))
+        self.stair_heading_probe = float(cfg["env"].get("stair_heading_probe", 0.30))
+
         # Terrain-aware stepping rewards.  The individual terms are exposed in
         # reward_raw for diagnosis, but enter PPO through one bounded safety
         # module so that adding safety objectives cannot swamp trajectory/AMP.
@@ -980,11 +988,38 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
         return obs
 
+    def _terrain_gradient_heading(self, root_pos):
+        """Heading along the local terrain gradient, for the trajectory start.
+
+        The trajectory generator moves along [cos(theta), -sin(theta)] in world
+        xy, so an uphill direction (gx, gy) corresponds to atan2(-gy, gx).
+        """
+        n = root_pos.shape[0]
+        d = self.stair_heading_probe
+        offs = torch.tensor([[d, 0.0, 0.0], [-d, 0.0, 0.0],
+                             [0.0, d, 0.0], [0.0, -d, 0.0]],
+                            device=root_pos.device, dtype=root_pos.dtype)
+        pts = root_pos[:, None, :] + offs[None]
+        h = self._sample_static_terrain(pts)
+        gx = h[:, 0] - h[:, 1]
+        gy = h[:, 2] - h[:, 3]
+        if self.stair_heading_mode == "downhill":
+            gx, gy = -gx, -gy
+        # flat ground (or exactly on a plateau): keep walking along +x
+        flat = (gx.abs() + gy.abs()) < 1e-4
+        gx = torch.where(flat, torch.ones_like(gx), gx)
+        gy = torch.where(flat, torch.zeros_like(gy), gy)
+        return torch.atan2(-gy, gx)
+
     def _reset_task(self, env_ids):
         # super()._reset_task(env_ids) # Commented out to disable traj resetting
         if not flags.server_mode:
             root_pos = self._humanoid_root_states[env_ids, 0:3]
-            self._traj_gen.reset(env_ids, root_pos)
+            headings = None
+            if self.stair_heading_mode in ("uphill", "downhill"):
+                headings = self._terrain_gradient_heading(root_pos)
+            self._traj_gen.reset(env_ids, root_pos, init_heading=headings,
+                                 turn_scale=self.stair_path_turn_scale)
         return
 
 

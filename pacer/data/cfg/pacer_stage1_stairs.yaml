@@ -71,6 +71,14 @@ env:
   edge_activation_height: 0.12
   edge_distance_scale: 0.12
 
+  # Terrain-aware target paths: start every new trajectory along the local
+  # uphill gradient instead of a random heading, and keep the path mostly
+  # straight (turn_scale damps the random waypoint turns). Without this the
+  # robot wanders and never actually approaches a stair.
+  stair_heading_mode: uphill      # random | uphill | downhill
+  stair_path_turn_scale: 0.20
+  stair_heading_probe: 0.30       # metres used to measure the gradient
+
   has_shape_obs: True
   has_shape_obs_disc: True
   has_shape_variation: False
