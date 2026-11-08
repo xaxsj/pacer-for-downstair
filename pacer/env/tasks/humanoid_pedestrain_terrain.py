@@ -1483,31 +1483,35 @@ from pacer.utils.draw_utils import *
 
 def straight_stairs_terrain(terrain, step_width, step_height, stair_width,
                             num_steps, start_dist, platform_len=1.5,
-                            side_depth=1.5, ascend=True, spawn_inset=0.20):
+                            side_depth=1.5, ascend=True, spawn_inset=0.20,
+                            approach_buf=1.0):
     """One straight stair flight inside a single tile.
 
     Layout along +x (the walking direction):
 
-        [0, start_dist)              flat approach
-        num_steps steps of           step_width (tread depth) x step_height (riser)
-        [.., + platform_len)         flat landing at the far level
-        beyond                       pit
+        [0, approach_buf)                       flat buffer
+        [.., + start_dist)                      flat approach
+        num_steps steps of step_width/step_height
+        [.., + platform_len)                    flat landing at the far level
+        beyond                                  pit
+
+    The robot spawns on a thin strip at the end of the buffer, so there is flat
+    ground behind it (otherwise it stands on the lip of the previous tile's pit).
 
     ``ascend`` puts the approach at height 0 and climbs; ``ascend=False`` starts
     at the top level and descends.  The corridor is ``stair_width`` metres clear
-    in y; everything outside is a pit ``side_depth`` metres deep, so W actually
+    in y; everything outside is a pit ``side_depth`` metres deep, so W really
     changes the collision mesh and the walkable area (doc §7).
 
-    Returns (walk, spawn) boolean masks with the tile's shape.  ``spawn`` is the
-    thin strip at the start of the approach, inset ``spawn_inset`` from both
-    corridor edges, so the distance to the first riser equals ``start_dist``.
+    Returns (walk, spawn) boolean masks with the tile's shape.
     """
     hs, vs = terrain.horizontal_scale, terrain.vertical_scale
     n_rows, n_cols = terrain.height_field_raw.shape
 
     step_w = max(int(round(step_width / hs)), 1)
     step_h = int(round(step_height / vs))
-    start_px = max(int(round(start_dist / hs)), 1)
+    buf_px = max(int(round(approach_buf / hs)), 1)
+    start_px = max(buf_px + int(round(start_dist / hs)), buf_px + 1)
     half_w = max(int(round(stair_width / 2.0 / hs)), 1)
     plat_px = max(int(round(platform_len / hs)), 0)
     pit = -int(round(side_depth / vs))
@@ -1539,12 +1543,12 @@ def straight_stairs_terrain(terrain, step_width, step_height, stair_width,
     hf[plat_end:, :] = pit
     walk[plat_end:, :] = False
 
-    # spawn strip at the start of the approach, inset from both edges
-    strip = max(min(int(round(0.10 / hs)), start_px), 1)
+    # spawn strip at the end of the buffer, inset from both corridor edges
+    strip = max(min(int(round(0.10 / hs)), buf_px), 1)
     inset = int(round(spawn_inset / hs))
     sy0 = min(y0 + inset, y1 - 1)
     sy1 = max(y1 - inset, sy0 + 1)
-    spawn[:strip, sy0:sy1] = True
+    spawn[buf_px - strip:buf_px, sy0:sy1] = True
     return walk, spawn
 
 
@@ -1835,9 +1839,16 @@ class Terrain:
         coord_x, coord_y = torch.where(self.walkable_field == 0)
         coord_x_scale = coord_x * self.horizontal_scale
         coord_y_scale = coord_y * self.horizontal_scale
+        # Keep points inside the tile atlas. The old version subtracted a 50 m
+        # border from the bbox of the walkable pixels, which silently deleted the
+        # straight-stair approach strips near a tile edge.
+        x_lo = self.border * self.horizontal_scale
+        x_hi = (self.border + self.env_rows * self.length_per_env_pixels) * self.horizontal_scale
+        y_lo = self.border * self.horizontal_scale
+        y_hi = (self.border + self.env_cols * self.width_per_env_pixels) * self.horizontal_scale
         walkable_subset = torch.logical_and(
-                torch.logical_and(coord_y_scale < coord_y_scale.max() - self.border * self.horizontal_scale, coord_x_scale < coord_x_scale.max() - self.border * self.horizontal_scale),
-                torch.logical_and(coord_y_scale > coord_y_scale.min() + self.border * self.horizontal_scale, coord_x_scale > coord_x_scale.min() +  self.border * self.horizontal_scale)
+                torch.logical_and(coord_x_scale >= x_lo, coord_x_scale < x_hi),
+                torch.logical_and(coord_y_scale >= y_lo, coord_y_scale < y_hi)
             )
         # import ipdb; ipdb.set_trace()
         # joblib.dump(self.walkable_field_raw, "walkable_field.pkl")
