@@ -154,6 +154,10 @@ env:
     stair_spawn_bias: 1.0
     stair_spawn_window: 0.5
     stair_spawn_min_spread: 0.05
+    # Each env keeps its own corridor: the spawn point is drawn once and reused
+    # on every reset, so h/d/W of an env never change mid-run. Diversity comes
+    # from env to env (different tiles), not from reset to reset.
+    fixed_spawn_per_env: true
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
     # Every tile is a flat-flight corridor (it already contains up + platform +
     # down), so the whole budget goes to the stair slot; no slopes anywhere.

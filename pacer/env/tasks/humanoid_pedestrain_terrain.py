@@ -1934,6 +1934,10 @@ class Terrain:
         self.stair_down_steps_max = int(cfg.get("stair_down_steps_max", 7))
         self.stair_approach_buf = float(cfg.get("stair_approach_buf", 1.0))
         self.stair_runout = float(cfg.get("stair_runout", 2.0))
+        # Pin each env to one corridor: the spawn point is drawn once and reused
+        # on every reset, so the stair parameters of an env never change mid-run.
+        self.fixed_spawn_per_env = bool(cfg.get("fixed_spawn_per_env", True))
+        self._env_spawn_locs = None
         self.stair_side_depth = float(cfg.get("stair_side_depth", 1.5))
         # Lateral inset from the corridor edge used for the spawn strip (doc
         # §6.1: at least 95% of spawns must be 0.20 m inside the edge).
@@ -2060,16 +2064,29 @@ class Terrain:
                 valid_locs = valid_locs[env_ids]
         else:
             num_envs = env_ids.shape[0]
-            idxes = np.random.randint(0, self.num_samples, size=num_envs)
+            # Fixed spawn per env: draw the whole set once and reuse it for every
+            # reset, so an env always returns to the same corridor (same h/d/W)
+            # instead of teleporting to a different tile. Variation then comes
+            # from env to env, not from reset to reset.
+            if (getattr(self, "fixed_spawn_per_env", False)
+                    and self._env_spawn_locs is not None
+                    and self._env_spawn_locs.shape[0] >= int(env_ids.max()) + 1):
+                return self._env_spawn_locs[env_ids]
+
+            draw = max_num_envs if getattr(self, "fixed_spawn_per_env", False) else num_envs
+            idxes = np.random.randint(0, self.num_samples, size=draw)
             if getattr(self, "stair_spawn_bias", 0.0) > 0.0 and \
                     self.stair_spawn_idx.size > 0:
-                take = np.random.rand(num_envs) < self.stair_spawn_bias
+                take = np.random.rand(draw) < self.stair_spawn_bias
                 n_take = int(take.sum())
                 if n_take > 0:
                     idxes[take] = self.stair_spawn_idx[
                         np.random.randint(0, self.stair_spawn_idx.size,
                                           size=n_take)]
             valid_locs = torch.stack([self.coord_x_scale[idxes], self.coord_y_scale[idxes]], dim = -1)
+            if getattr(self, "fixed_spawn_per_env", False):
+                self._env_spawn_locs = valid_locs
+                valid_locs = valid_locs[env_ids]
 
         return valid_locs
 
