@@ -1481,6 +1481,73 @@ from isaacgym.terrain_utils import *
 from pacer.utils.draw_utils import *
 
 
+def straight_stairs_terrain(terrain, step_width, step_height, stair_width,
+                            num_steps, start_dist, platform_len=1.5,
+                            side_depth=1.5, ascend=True, spawn_inset=0.20):
+    """One straight stair flight inside a single tile.
+
+    Layout along +x (the walking direction):
+
+        [0, start_dist)              flat approach
+        num_steps steps of           step_width (tread depth) x step_height (riser)
+        [.., + platform_len)         flat landing at the far level
+        beyond                       pit
+
+    ``ascend`` puts the approach at height 0 and climbs; ``ascend=False`` starts
+    at the top level and descends.  The corridor is ``stair_width`` metres clear
+    in y; everything outside is a pit ``side_depth`` metres deep, so W actually
+    changes the collision mesh and the walkable area (doc §7).
+
+    Returns (walk, spawn) boolean masks with the tile's shape.  ``spawn`` is the
+    thin strip at the start of the approach, inset ``spawn_inset`` from both
+    corridor edges, so the distance to the first riser equals ``start_dist``.
+    """
+    hs, vs = terrain.horizontal_scale, terrain.vertical_scale
+    n_rows, n_cols = terrain.height_field_raw.shape
+
+    step_w = max(int(round(step_width / hs)), 1)
+    step_h = int(round(step_height / vs))
+    start_px = max(int(round(start_dist / hs)), 1)
+    half_w = max(int(round(stair_width / 2.0 / hs)), 1)
+    plat_px = max(int(round(platform_len / hs)), 0)
+    pit = -int(round(side_depth / vs))
+
+    cy = n_cols // 2
+    y0 = max(cy - half_w, 0)
+    y1 = min(cy + half_w, n_cols)
+    top_h = num_steps * step_h
+
+    hf = terrain.height_field_raw
+    hf[:] = pit
+    walk = np.zeros(hf.shape, dtype=bool)
+    spawn = np.zeros(hf.shape, dtype=bool)
+
+    # corridor floor at the approach level
+    hf[:, y0:y1] = 0 if ascend else top_h
+    walk[:, y0:y1] = True
+
+    x = start_px
+    for i in range(num_steps):
+        level = (i + 1) * step_h if ascend else top_h - (i + 1) * step_h
+        hf[x:x + step_w, y0:y1] = level
+        x += step_w
+    far_level = top_h if ascend else 0
+    plat_end = min(x + plat_px, n_rows)
+    hf[x:plat_end, y0:y1] = far_level
+
+    # past the landing everything is a pit again
+    hf[plat_end:, :] = pit
+    walk[plat_end:, :] = False
+
+    # spawn strip at the start of the approach, inset from both edges
+    strip = max(min(int(round(0.10 / hs)), start_px), 1)
+    inset = int(round(spawn_inset / hs))
+    sy0 = min(y0 + inset, y1 - 1)
+    sy1 = max(y1 - inset, sy0 + 1)
+    spawn[:strip, sy0:sy1] = True
+    return walk, spawn
+
+
 def poles_terrain(terrain, difficulty=1):
     """
     Generate stairs
@@ -1706,6 +1773,33 @@ class Terrain:
         # before it meets the first riser.
         self.stair_platform_size = float(cfg.get("stair_platform_size", 3.0))
 
+        # --- curriculum terrain (docs/安全奖励与万轮课程训练计划-20261108.md §7) --
+        # stair_terrain: "pyramid" (original) or "straight" (one flight per tile
+        # with an explicit clear width W, platform length and start distance).
+        self.stair_terrain = str(cfg.get("stair_terrain", "pyramid"))
+        self.stair_riser_min = float(cfg.get("stair_riser_min",
+                                             cfg.get("stair_height_min", 0.10)))
+        self.stair_riser_max = float(cfg.get("stair_riser_max",
+                                             cfg.get("stair_height_max", 0.22)))
+        # Clear width W is sampled from discrete bins when given (doc §7: uniform
+        # sampling is not allowed, every bin needs a stable sample count).
+        self.stair_width_bins = [float(v) for v in cfg.get("stair_width_bins", [])]
+        self.stair_width_probs = [float(v) for v in cfg.get("stair_width_probs", [])]
+        self.stair_width_min = float(cfg.get("stair_width_min", 2.4))
+        self.stair_width_max = float(cfg.get("stair_width_max", 3.0))
+        self.stair_steps_min = int(cfg.get("stair_steps_min", 5))
+        self.stair_steps_max = int(cfg.get("stair_steps_max", 7))
+        self.stair_platform_min = float(cfg.get("stair_platform_min",
+                                                cfg.get("stair_platform_size", 3.0)))
+        self.stair_platform_max = float(cfg.get("stair_platform_max",
+                                                cfg.get("stair_platform_size", 3.0)))
+        self.stair_start_dist_min = float(cfg.get("stair_start_dist_min", 0.4))
+        self.stair_start_dist_max = float(cfg.get("stair_start_dist_max", 0.8))
+        self.stair_side_depth = float(cfg.get("stair_side_depth", 1.5))
+        # Lateral inset from the corridor edge used for the spawn strip (doc
+        # §6.1: at least 95% of spawns must be 0.20 m inside the edge).
+        self.stair_spawn_inset = float(cfg.get("stair_spawn_inset", 0.20))
+
         self.env_rows = cfg["numLevels"]
         self.env_cols = cfg["numTerrains"]
         self.num_maps = self.env_rows * self.env_cols
@@ -1723,6 +1817,9 @@ class Terrain:
 
         self.height_field_raw = np.zeros((self.tot_rows, self.tot_cols), dtype=np.int16)
         self.walkable_field_raw = np.zeros((self.tot_rows, self.tot_cols), dtype=np.int16)
+        # 1 = allowed spawn point. Straight-stair tiles declare the approach strip
+        # so the distance to the first riser equals stair_start_dist.
+        self.spawn_mask_raw = np.zeros((self.tot_rows, self.tot_cols), dtype=np.int8)
         if cfg["curriculum"]:
             self.curiculum(num_robots,
                            num_terrains=self.env_cols,
@@ -1779,6 +1876,32 @@ class Terrain:
                       f"{self.num_samples} spawn points on stairs "
                       f"(bias {self.stair_spawn_bias:.2f})")
 
+        # Straight-stair tiles declare their own approach strip; use it directly
+        # so the run-up before the first riser is exactly stair_start_dist.
+        if self.spawn_mask_raw.any():
+            px = coord_x[walkable_subset].cpu().numpy()
+            py = coord_y[walkable_subset].cpu().numpy()
+            picked = np.where(self.spawn_mask_raw[px, py] > 0)[0]
+            if picked.size:
+                self.stair_spawn_idx = picked
+                self.stair_spawn_bias = 1.0
+                print(f"[stair_spawn] {picked.size} / {self.num_samples} spawn "
+                      f"points on the straight-stair approach")
+            else:
+                print("[stair_spawn] WARNING spawn mask has no walkable point; "
+                      "falling back to uniform spawns")
+
+    def _sample_stair_width(self):
+        """Clear width W: discrete bins when configured, uniform range otherwise."""
+        if (self.stair_width_bins
+                and len(self.stair_width_bins) == len(self.stair_width_probs)):
+            probs = np.asarray(self.stair_width_probs, dtype=float)
+            total = probs.sum()
+            if total > 0:
+                return float(np.random.choice(self.stair_width_bins,
+                                              p=probs / total))
+        return float(np.random.uniform(self.stair_width_min,
+                                       self.stair_width_max))
 
     def sample_valid_locations(self, max_num_envs, env_ids, group_num_people = 16, sample_groups = False):
         if sample_groups:
@@ -1982,7 +2105,8 @@ class Terrain:
                 choice = j / num_terrains
 
                 slope = difficulty * 0.7
-                step_height = np.random.uniform(self.stair_height_min, self.stair_height_max)
+                step_height = np.random.uniform(self.stair_riser_min,
+                                                self.stair_riser_max)
                 step_tread = np.random.uniform(self.stair_tread_min, self.stair_tread_max)
                 discrete_obstacles_height = 0.025 + difficulty * 0.15
                 stepping_stones_size = 2 - 1.8 * difficulty
@@ -2010,12 +2134,41 @@ class Terrain:
                                            step=0.025,
                                            downsampled_scale=0.2)
                 elif choice < self.proportions[3]:
-                    if choice < self.proportions[2]:
-                        step_height *= -1
-                    pyramid_stairs_terrain(terrain,
-                                           step_width=step_tread,
-                                           step_height=step_height,
-                                           platform_size=3.)
+                    if self.stair_terrain == "straight":
+                        # h / d / W / steps / platform / start distance are all
+                        # randomised per tile (doc §7: no uniform-only width).
+                        width_i = self._sample_stair_width()
+                        steps_i = int(np.random.randint(self.stair_steps_min,
+                                                        self.stair_steps_max + 1))
+                        start_i = float(np.random.uniform(self.stair_start_dist_min,
+                                                          self.stair_start_dist_max))
+                        plat_i = float(np.random.uniform(self.stair_platform_min,
+                                                         self.stair_platform_max))
+                        # Slot [proportions[1], proportions[2]) ascends, the next
+                        # slot descends (doc §7 Stage 1 = 60% up / 25% down).
+                        ascend = bool(choice < self.proportions[2])
+                        walk, spawn = straight_stairs_terrain(
+                            terrain,
+                            step_width=step_tread,
+                            step_height=abs(step_height),
+                            stair_width=width_i,
+                            num_steps=steps_i,
+                            start_dist=start_i,
+                            platform_len=plat_i,
+                            side_depth=self.stair_side_depth,
+                            ascend=ascend,
+                            spawn_inset=self.stair_spawn_inset)
+                        self.walkable_field_raw[start_x:end_x,
+                                                start_y:end_y] = (~walk).astype(int)
+                        self.spawn_mask_raw[start_x:end_x,
+                                            start_y:end_y] = spawn.astype(np.int8)
+                    else:
+                        if choice < self.proportions[2]:
+                            step_height *= -1
+                        pyramid_stairs_terrain(terrain,
+                                               step_width=step_tread,
+                                               step_height=step_height,
+                                               platform_size=self.stair_platform_size)
                 elif choice < self.proportions[4]:
                     discrete_obstacles_terrain(terrain,
                                                discrete_obstacles_height,

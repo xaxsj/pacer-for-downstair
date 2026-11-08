@@ -116,25 +116,34 @@ env:
     mapWidth: 20.
     numLevels: 5
     numTerrains: 20
-    # Stage 1: first adapt the official checkpoint to the new reward on easy
-    # stairs.  Later stages widen these ranges instead of changing rewards.
-    stair_height_min: 0.08
-    stair_height_max: 0.12
+    # Stage 1 geometry (docs/安全奖励与万轮课程训练计划-20261108.md §7).
+    # Straight flights only: h / d / W / steps / platform / start distance are
+    # sampled per tile; W uses discrete bins, not a uniform range.
+    stair_terrain: straight
+    stair_riser_min: 0.08
+    stair_riser_max: 0.12
     stair_tread_min: 0.35
     stair_tread_max: 0.42
-    # Flat area at the top of each pyramid stair block, in metres. Shrinking it
-    # from 3.0 to 1.0 shortens the run-up a robot can build before the first
-    # riser (spawn sampling already excludes the 50 m outer border).
+    stair_width_bins: [3.0, 2.8, 2.4]
+    stair_width_probs: [0.25, 0.45, 0.30]
+    stair_steps_min: 5
+    stair_steps_max: 7
+    stair_platform_min: 1.5
+    stair_platform_max: 2.0
+    stair_start_dist_min: 0.4
+    stair_start_dist_max: 0.8
+    stair_side_depth: 1.5      # pit outside the corridor, so W is a real width
+    stair_spawn_inset: 0.20
+    # Legacy pyramid knobs (only used when stair_terrain: pyramid).
     stair_platform_size: 1.5
-    # Spawn almost always on a stair tread instead of a plateau, so the rollout
-    # is spent going up/down steps. A point qualifies when the terrain varies by
-    # >= stair_spawn_min_spread inside a stair_spawn_window half-window.
+    # Spawn on the straight-stair approach strip; the distance to the first
+    # riser then equals stair_start_dist.
     stair_spawn_bias: 1.0
     stair_spawn_window: 0.5
     stair_spawn_min_spread: 0.05
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
-    # No slopes in any curriculum stage: 25% down, 60% up, 15% flat.
-    terrainProportions: [0.0, 0.0, 0.25, 0.60, 0.0, 0.0, 0.0, 0.15]
+    # Stage 1: 60% up, 25% down, 15% flat; no slopes in any stage (doc §0).
+    terrainProportions: [0.0, 0.0, 0.60, 0.25, 0.0, 0.0, 0.0, 0.15]
     # terrainProportions: [0, 0, 0, 0., 0., 0., 1, 0]
     # terrainProportions: [0, 0, 0, 0, 0, 0., 0, 1]
     # tri mesh only:
