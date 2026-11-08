@@ -34,7 +34,7 @@ class TrajGenerator():
         self.heading = torch.zeros(num_envs, 1)
         return
 
-    def reset(self, env_ids, init_pos):
+    def reset(self, env_ids, init_pos, init_heading=None, turn_scale=1.0):
         n = len(env_ids)
         if (n > 0):
             num_verts = self.get_num_verts()
@@ -46,7 +46,16 @@ class TrajGenerator():
             sharp_mask = torch.bernoulli(sharp_probs) == 1.0
             dtheta[sharp_mask] = dtheta_sharp[sharp_mask]
 
-            dtheta[:, 0] = np.pi * (2 * torch.rand([n], device=self._device) - 1.0) # Heading
+            if init_heading is None:
+                dtheta[:, 0] = np.pi * (2 * torch.rand([n], device=self._device) - 1.0) # Heading
+            else:
+                # Terrain-aware heading: start the path along the given direction
+                # (e.g. the local uphill gradient) instead of a random one, and
+                # damp the random waypoint turns so the path stays mostly straight.
+                dtheta[:, 0] = init_heading.to(self._device).view(-1).float()
+                if turn_scale != 1.0:
+                    dtheta[:, 1:] = dtheta[:, 1:] * float(turn_scale)
+                    dtheta_sharp[:, :] = 0.0
 
 
             dspeed = 2 * torch.rand([n, num_verts - 1], device=self._device) - 1.0
