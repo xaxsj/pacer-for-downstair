@@ -133,8 +133,8 @@ env:
     stair_spawn_window: 0.5
     stair_spawn_min_spread: 0.05
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
-    # 10% slope, 20% descending stairs, 60% ascending stairs, 10% flat.
-    terrainProportions: [0.10, 0.0, 0.20, 0.60, 0.0, 0.0, 0.0, 0.10]
+    # No slopes in any curriculum stage: 25% down, 60% up, 15% flat.
+    terrainProportions: [0.0, 0.0, 0.25, 0.60, 0.0, 0.0, 0.0, 0.15]
     # terrainProportions: [0, 0, 0, 0., 0., 0., 1, 0]
     # terrainProportions: [0, 0, 0, 0, 0, 0., 0, 1]
     # tri mesh only:

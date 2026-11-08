@@ -3,7 +3,7 @@ set -euo pipefail
 source /data/ljx/scripts/pacer_env.sh
 cd "$PACER_ROOT"
 
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-3}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-51250}"
 
 OUT="${OUT:-output/exp/pacer_safe_initial_10k}"

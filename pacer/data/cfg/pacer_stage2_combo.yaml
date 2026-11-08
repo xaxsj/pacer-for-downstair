@@ -117,6 +117,7 @@ env:
     numLevels: 5
     numTerrains: 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
+    # The first two entries must remain zero: slopes are excluded by design.
     terrainProportions: [0.0, 0.0, 0.35, 0.35, 0.0, 0.0, 0.0, 0.30]
     # terrainProportions: [0, 0, 0, 0., 0., 0., 1, 0]
     # terrainProportions: [0, 0, 0, 0, 0, 0., 0, 1]
