@@ -12,7 +12,9 @@ if [ ! -f "$OUT/Humanoid.pth" ]; then
 fi
 
 # Original weights + 10,000 additional epochs; reward function unchanged.
-timeout 43200 python pacer/run.py \
+# No wall-clock cap: the run stops only at --max_iterations. The previous
+# `timeout 43200` (12 h) killed this run at epoch 49,700 / 51,250 = 84.5%.
+python pacer/run.py \
   --task HumanoidPedestrianTerrain \
   --cfg_env pacer/data/cfg/pacer_stage1_stairs.yaml \
   --cfg_train pacer/data/cfg/train/rlg/amp_humanoid_smpl_sept_stage1.yaml \
