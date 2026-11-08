@@ -4,7 +4,8 @@
 #
 #   GPU=4 ENVS=256 STEPS=600 OUT=output/reward_debug.csv
 #
-# STEPS is in control steps (32 per PPO epoch), so MAX_IT is derived from it.
+# The env dumps the CSV and exits once STEPS control steps are accumulated, so
+# MAX_IT only has to exceed the checkpoint epoch (it is not a step budget).
 set -u
 source /data/ljx/scripts/pacer_env.sh
 cd "$PACER_ROOT"
@@ -16,7 +17,7 @@ OUT=${OUT:-output/reward_debug.csv}
 CFG_ENV=${CFG_ENV:-pacer/data/cfg/pacer_stage1_stairs.yaml}
 CFG_TRAIN=${CFG_TRAIN:-pacer/data/cfg/train/rlg/amp_humanoid_smpl_sept_stage1_smoke.yaml}
 NETWORK=${NETWORK:-output/release/pacer}
-MAX_IT=${MAX_IT:-$(( (STEPS + 31) / 32 + 1 ))}
+MAX_IT=${MAX_IT:-60000}
 
 mkdir -p "$(dirname "$OUT")"
 echo "[reward_monitor] envs=$ENVS steps=$STEPS max_it=$MAX_IT -> $OUT"
@@ -33,3 +34,4 @@ python pacer/run.py \
   --reward_debug --reward_debug_steps "$STEPS" --reward_debug_out "$OUT" \
   2>&1 | grep -a "reward_debug\|term\|mean\|Ep:" | tail -20
 echo REWARD_MONITOR_DONE
+
