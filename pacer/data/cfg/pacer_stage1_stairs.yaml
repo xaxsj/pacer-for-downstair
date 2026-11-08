@@ -103,6 +103,12 @@ env:
     # from 3.0 to 1.0 shortens the run-up a robot can build before the first
     # riser (spawn sampling already excludes the 50 m outer border).
     stair_platform_size: 1.0
+    # Spawn almost always on a stair tread instead of a plateau, so the rollout
+    # is spent going up/down steps. A point qualifies when the terrain varies by
+    # >= stair_spawn_min_spread inside a stair_spawn_window half-window.
+    stair_spawn_bias: 1.0
+    stair_spawn_window: 0.5
+    stair_spawn_min_spread: 0.05
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete, stepping, poles, flat]
     terrainProportions: [0.0, 0.0, 0.45, 0.45, 0.0, 0.0, 0.0, 0.10]
     # terrainProportions: [0, 0, 0, 0., 0., 0., 1, 0]

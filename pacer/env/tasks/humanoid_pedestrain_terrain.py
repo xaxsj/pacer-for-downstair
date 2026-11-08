@@ -1386,6 +1386,36 @@ class Terrain:
         self.coord_y_scale = coord_y_scale[walkable_subset]
         self.num_samples = self.coord_x_scale.shape[0]
 
+        # Prefer spawn points that actually sit on stairs. A point counts as
+        # "on a stair" when the terrain height varies by at least
+        # stair_spawn_min_spread inside a stair_spawn_window half-window, i.e.
+        # there is a riser within reach rather than a flat plateau. The robot
+        # then spends its rollout going up/down steps instead of walking along
+        # the top of a pyramid.
+        self.stair_spawn_bias = float(cfg.get("stair_spawn_bias", 0.0))
+        self.stair_spawn_idx = np.zeros((0,), dtype=np.int64)
+        if self.stair_spawn_bias > 0.0:
+            from scipy.ndimage import maximum_filter, minimum_filter
+            window = int(round(float(cfg.get("stair_spawn_window", 0.5))
+                               / self.horizontal_scale))
+            min_spread = int(round(float(cfg.get("stair_spawn_min_spread", 0.05))
+                                   / self.vertical_scale))
+            size = 2 * window + 1
+            hmax = maximum_filter(self.height_field_raw, size=size)
+            hmin = minimum_filter(self.height_field_raw, size=size)
+            spread = hmax - hmin
+            px = coord_x[walkable_subset].cpu().numpy()
+            py = coord_y[walkable_subset].cpu().numpy()
+            self.stair_spawn_idx = np.where(spread[px, py] >= min_spread)[0]
+            if self.stair_spawn_idx.size == 0:
+                print("[stair_spawn] WARNING no stair points found; "
+                      "falling back to uniform spawns")
+                self.stair_spawn_bias = 0.0
+            else:
+                print(f"[stair_spawn] {self.stair_spawn_idx.size} / "
+                      f"{self.num_samples} spawn points on stairs "
+                      f"(bias {self.stair_spawn_bias:.2f})")
+
 
     def sample_valid_locations(self, max_num_envs, env_ids, group_num_people = 16, sample_groups = False):
         if sample_groups:
@@ -1399,6 +1429,14 @@ class Terrain:
         else:
             num_envs = env_ids.shape[0]
             idxes = np.random.randint(0, self.num_samples, size=num_envs)
+            if getattr(self, "stair_spawn_bias", 0.0) > 0.0 and \
+                    self.stair_spawn_idx.size > 0:
+                take = np.random.rand(num_envs) < self.stair_spawn_bias
+                n_take = int(take.sum())
+                if n_take > 0:
+                    idxes[take] = self.stair_spawn_idx[
+                        np.random.randint(0, self.stair_spawn_idx.size,
+                                          size=n_take)]
             valid_locs = torch.stack([self.coord_x_scale[idxes], self.coord_y_scale[idxes]], dim = -1)
 
         return valid_locs
