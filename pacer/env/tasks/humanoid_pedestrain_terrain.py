@@ -1337,6 +1337,11 @@ class Terrain:
         self.stair_height_max = float(cfg.get("stair_height_max", 0.22))
         self.stair_tread_min = float(cfg.get("stair_tread_min", 0.24))
         self.stair_tread_max = float(cfg.get("stair_tread_max", 0.38))
+        # Flat area at the top of the pyramid stairs. This is the only
+        # multi-metre flat patch inside a tile (spawns exclude the outer
+        # border), so shrinking it shortens the run-up a robot can build up
+        # before it meets the first riser.
+        self.stair_platform_size = float(cfg.get("stair_platform_size", 3.0))
 
         self.env_rows = cfg["numLevels"]
         self.env_cols = cfg["numTerrains"]
@@ -1527,7 +1532,7 @@ class Terrain:
                 pyramid_stairs_terrain(terrain,
                                        step_width=step_tread,
                                        step_height=step_height,
-                                       platform_size=3.)
+                                       platform_size=self.stair_platform_size)
             elif choice < self.proportions[4]:
                 discrete_obstacles_terrain(terrain,
                                            discrete_obstacles_height,
