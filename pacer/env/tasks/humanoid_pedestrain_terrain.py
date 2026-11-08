@@ -1668,8 +1668,12 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf,
         masked_contact_buf = contact_buf.clone()
         masked_contact_buf[:, contact_body_ids, :] = 0
         ## torch.sum to disable self-collision.
-        # force_threshold = 200
-        force_threshold = 50
+        # TEMP(thr200): with 50 N every non-foot graze ended the episode. On the
+        # eval stairs 12/12 runs terminated on a KNEE contact (76-2190 N) while the
+        # torso was still upright (6.5-29 deg), so the "1 s failure" was the
+        # termination rule, not a fall. Restored to the upstream default 200 to
+        # test that hypothesis without retraining.
+        force_threshold = 200
         body_contact_force = torch.sqrt(torch.square(torch.abs(masked_contact_buf.sum(dim=-2))).sum(dim=-1)) > force_threshold
 
         # body_height = rigid_body_pos[..., 2]
