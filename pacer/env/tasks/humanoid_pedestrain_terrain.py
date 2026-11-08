@@ -116,6 +116,12 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
             ["L_Ankle", "L_Toe", "R_Ankle", "R_Toe"])
         self._edge_foot_ids = self._build_key_body_ids_tensor(
             ["L_Ankle", "R_Ankle"])
+        # (B) TEMP: feet + knees never trigger the fall termination. A shin
+        # grazing a 0.15 m riser edge was ending episodes while upright.
+        self._term_ignore_ids = torch.cat([
+            self._contact_body_ids,
+            self._build_key_body_ids_tensor(["L_Knee", "R_Knee"]),
+        ])
         self._collision_bottom_offsets = torch.tensor(
             [-0.0487, 0.0070, -0.0487, 0.0070],
             dtype=torch.float32, device=self.device)
@@ -1066,7 +1072,7 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         # ipdb.set_trace()
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(
             self.reset_buf, self.progress_buf, self._contact_forces,
-            self._contact_body_ids, center_height, self._rigid_body_pos,
+            self._term_ignore_ids, center_height, self._rigid_body_pos,
             tar_pos, self.max_episode_length, self._fail_dist,
             self._enable_early_termination, self._termination_heights, flags.no_collision_check)
         return
@@ -1676,18 +1682,11 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf,
         force_threshold = 200
         body_contact_force = torch.sqrt(torch.square(torch.abs(masked_contact_buf.sum(dim=-2))).sum(dim=-1)) > force_threshold
 
-        # (A) restore the upstream fall test: a body counts as fallen only if it
-        # is in contact AND its height above the local terrain is below that
-        # body's termination height. With the contact-only rule a shin/knee
-        # grazing a 0.15 m riser edge (300-400 N while standing upright) ended
-        # the episode, so stair climbing could never be learned.
-        body_height = rigid_body_pos[..., 2] - center_height
-
-        fall_height = body_height < termination_heights
-        fall_height[:, contact_body_ids] = False
-        fall_height = torch.any(fall_height, dim=-1)
-
-        has_fallen = torch.logical_and(body_contact_force, fall_height)
+        # (B) knees/shins graze the riser edge while the robot is still upright
+        # (300-1000 N with >0.3 m body clearance), which ended the episode and
+        # made stair climbing unlearnable. They are removed from the
+        # termination contact set; torso/head/pelvis contacts still terminate.
+        has_fallen = body_contact_force
         # first timestep can sometimes still have nonzero contact forces
         # so only check after first couple of steps
         has_fallen *= (progress_buf > 1)
