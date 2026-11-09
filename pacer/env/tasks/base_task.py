@@ -38,7 +38,12 @@ PORT = 8081
 # SERVER = "klab-cereal.pc.cs.cmu.edu"
 SERVER = "klab-oatmeal.pc.cs.cmu.edu"
 
-# Base class for RL tasks
+# Recording camera: on the target path's left edge, looking at the path.
+CAM_SIDE_DIST = 10.0
+CAM_HEIGHT = 1.6
+CAM_LOOK_UP = 0.3
+
+
 class BaseTask():
     def __init__(self, cfg, enable_camera_sensors=False):
         self.headless = cfg["headless"]
@@ -268,6 +273,44 @@ class BaseTask():
                 self._auto_record_done = True
                 self._dump_auto_record()
 
+    def _path_anchor_for_camera(self, root_xyz):
+        """Nearest point on the target polyline, its height and left normal.
+
+        Path-anchored instead of body-anchored: the camera stays on the left
+        edge of the planned route, so the robot does not drag the frame around
+        when its torso twists.
+        """
+        if not hasattr(self, "_rec_cam_path"):
+            self._rec_cam_path = None
+            path_file = getattr(flags, "path_file", "") or ""
+            if path_file:
+                try:
+                    with open(path_file, "r", encoding="utf-8") as fh:
+                        pts = np.asarray(json.load(fh)["path"], dtype=float)
+                    if pts.shape[0] >= 2:
+                        self._rec_cam_path = pts
+                except Exception:
+                    self._rec_cam_path = None
+
+        pts = self._rec_cam_path
+        xy = np.asarray(root_xyz[:2], dtype=float)
+        if pts is None:
+            return np.asarray(root_xyz, dtype=float), float(root_xyz[2]) - 0.95, np.array([0.0, 1.0])
+
+        a, b = pts[:-1, :2], pts[1:, :2]
+        ab = b - a
+        seg = np.linalg.norm(ab, axis=1)
+        keep = seg > 1e-6
+        a, b, ab, seg = a[keep], b[keep], ab[keep], seg[keep]
+        za, zb = pts[:-1, 2][keep], pts[1:, 2][keep]
+        t = np.clip(((xy - a) * ab).sum(axis=1) / (seg ** 2), 0.0, 1.0)
+        proj = a + ab * t[:, None]
+        i = int(np.argmin(np.linalg.norm(xy - proj, axis=1)))
+        anchor = proj[i]
+        z = float(za[i] + (zb[i] - za[i]) * t[i])
+        dx, dy = ab[i] / seg[i]
+        return anchor, z, np.array([-dy, dx])
+
     def _capture_auto_video(self):
         """用 Isaac Gym 相机传感器抓一帧（无需窗口）。"""
         try:
@@ -283,13 +326,17 @@ class BaseTask():
             env_idx = self.viewing_env_idx
             cam_handle = self.recorder_camera_handles[env_idx]
             root = self._humanoid_root_states[env_idx, 0:3].cpu().numpy()
-            # 侧后方视角：能同时看到角色与整段楼梯
-            cam_pos = gymapi.Vec3(float(root[0]) + 1.5,
-                                  float(root[1]) - 7.5,
-                                  float(root[2]) + 3.0)
-            cam_target = gymapi.Vec3(float(root[0]) + 1.5,
-                                     float(root[1]) + 0.5,
-                                     float(root[2]) - 0.2)
+            # The camera is anchored to the target path: it sits on the path's
+            # left edge and always looks at the current path position, so the
+            # robot walks through a stable side view. (This is the camera that
+            # actually writes the mp4; the one in humanoid._update_camera only
+            # drives the interactive viewer.)
+            anchor, z_path, (sx, sy) = self._path_anchor_for_camera(root)
+            cam_pos = gymapi.Vec3(float(anchor[0]) + sx * CAM_SIDE_DIST,
+                                  float(anchor[1]) + sy * CAM_SIDE_DIST,
+                                  float(z_path) + CAM_HEIGHT)
+            cam_target = gymapi.Vec3(float(anchor[0]), float(anchor[1]),
+                                     float(z_path) + CAM_LOOK_UP)
             self.gym.set_camera_location(cam_handle, self.envs[env_idx],
                                          cam_pos, cam_target)
             self.gym.render_all_camera_sensors(self.sim)
