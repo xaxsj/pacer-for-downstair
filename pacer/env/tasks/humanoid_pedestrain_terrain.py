@@ -116,6 +116,16 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         # When the run follows a fixed path file (real-mesh routes), the episode
         # finishes at the end of that path instead of at a height-defined line.
         self.goal_radius = float(cfg["env"].get("goal_radius", 0.6))
+        # Clean finish: the episode only counts as completed once the robot is
+        # inside the goal zone, slow and upright for a few consecutive steps.
+        self.success_requires_stop = bool(
+            cfg["env"].get("success_requires_stop", False))
+        self.goal_zone_radius = float(cfg["env"].get("goal_zone_radius", 1.5))
+        self.stop_speed_max = float(cfg["env"].get("stop_speed_max", 0.4))
+        self.stop_frames_required = int(cfg["env"].get("stop_frames_required", 10))
+        self.goal_upright_deg = float(cfg["env"].get("goal_upright_deg", 20.0))
+        self._stable_count = torch.zeros(self.num_envs, dtype=torch.long,
+                                         device=self.device)
         self._goal_xy = None
         self._goal_path_pts = None
         _path_file = getattr(flags, "path_file", "") or ""
@@ -1602,6 +1612,26 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
         env_ids = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
         tar_pos = self._traj_gen.calc_pos(env_ids, self._anchored_time(env_ids, 1))
+        # Goal zone: freeze the target on the goal so the policy is asked to stop
+        # there instead of chasing a target that keeps moving until the episode
+        # is cut. Without this nothing in the reward ever favours standing still.
+        self._in_goal_zone = torch.zeros(self.num_envs, dtype=torch.bool,
+                                         device=self.device)
+        if self.stair_goal_termination and self._goal_xy is not None:
+            dist_xy = torch.linalg.norm(root_pos[:, :2] - self._goal_xy, dim=-1)
+            self._in_goal_zone = dist_xy < self.goal_zone_radius
+            frozen = torch.cat([self._goal_xy, tar_pos[:, 2:3]], dim=-1)
+            tar_pos = torch.where(self._in_goal_zone[:, None], frozen, tar_pos)
+        elif self.success_requires_stop:
+            # procedural corridor: the goal is a line along +x, so freeze the
+            # target's x once the robot is within the zone
+            dist_x = self._episode_goal_x - root_pos[:, 0]
+            self._in_goal_zone = (dist_x < self.goal_zone_radius) & (dist_x > -1.0)
+            tar_pos = torch.where(
+                self._in_goal_zone[:, None],
+                torch.cat([self._episode_goal_x[:, None], tar_pos[:, 1:]],
+                          dim=-1),
+                tar_pos)
         if self.fuzzy_target:
             location_reward = compute_location_reward_fuzzy(root_pos, tar_pos)
         else:
@@ -1621,6 +1651,11 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
                 env_ids, self._anchored_time(env_ids, 0))
             command_velocity = ((tar_pos[..., :2] - tar_now[..., :2])
                                 / max(self._traj_sample_timestep, 1e-4))
+            # inside the goal zone the commanded velocity is zero, so this term
+            # rewards decelerating to a stand instead of pushing forward
+            command_velocity = torch.where(
+                self._in_goal_zone[:, None],
+                torch.zeros_like(command_velocity), command_velocity)
             velocity_error = self._humanoid_root_states[..., 7:9] - command_velocity
             velocity_reward = torch.exp(
                 -self.velocity_error_scale
@@ -1675,9 +1710,27 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
                 # this, because a route may end higher than it started.
                 dist_goal = torch.linalg.norm(
                     root_xyz[:, :2] - self._goal_xy, dim=-1)
-                self._goal_buf = dist_goal < self.goal_radius
+                reached = dist_goal < self.goal_radius
             else:
-                self._goal_buf = root_xyz[:, 0] >= self._episode_goal_x
+                reached = root_xyz[:, 0] >= self._episode_goal_x
+            if self.success_requires_stop:
+                speed_xy = torch.linalg.norm(
+                    self._humanoid_root_states[:, 7:9], dim=-1)
+                pelvis = self._rigid_body_pos[:, self._pelvis_id]
+                chest = self._rigid_body_pos[:, self._chest_id]
+                axis = chest - pelvis
+                up_cos = axis[:, 2] / torch.clamp(
+                    torch.linalg.norm(axis, dim=-1), min=1e-6)
+                stable = ((speed_xy < self.stop_speed_max)
+                          & (up_cos > np.cos(np.deg2rad(self.goal_upright_deg))))
+                self._stable_count = torch.where(
+                    reached & stable,
+                    self._stable_count + 1,
+                    torch.zeros_like(self._stable_count))
+                self._goal_buf = reached & (self._stable_count
+                                            >= self.stop_frames_required)
+            else:
+                self._goal_buf = reached
             self._falloff_buf = (root_xyz[:, 2]
                                  < self._episode_spawn_z - self.fall_off_drop)
             if self.success_bonus != 0.0:
