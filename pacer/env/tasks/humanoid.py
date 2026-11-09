@@ -24,6 +24,18 @@ from env.tasks.base_task import BaseTask
 from tqdm import tqdm
 from poselib.poselib.skeleton.skeleton3d import SkeletonTree
 from collections import defaultdict
+
+# Side-on chase camera: the camera sits to the robot's left, perpendicular to
+# its heading, and follows the heading, so the stair profile (risers and treads)
+# is seen in elevation the whole way along the route.
+CAM_SIDE_DIST = 8.5
+CAM_HEIGHT = 0.35
+CAM_LOOK_UP = 0.0
+
+
+def _side_camera_xy(heading_yaw):
+    """Unit vector pointing to the robot's left, in world XY."""
+    return -np.sin(heading_yaw), np.cos(heading_yaw)
 from poselib.poselib.skeleton.skeleton3d import SkeletonMotion, SkeletonState
 from pacer.utils.draw_utils import agt_color
 
@@ -1298,24 +1310,32 @@ class Humanoid(BaseTask):
         self._cam_prev_char_pos = self._humanoid_root_states[
             0, 0:3].cpu().numpy()
 
-        cam_pos = gymapi.Vec3(self._cam_prev_char_pos[0],
-                              self._cam_prev_char_pos[1] - 3.0, 1.0)
+        q = self._humanoid_root_states[0, 3:7].cpu().numpy()
+        yaw = np.arctan2(2.0 * (q[3] * q[2] + q[0] * q[1]),
+                         1.0 - 2.0 * (q[1] * q[1] + q[2] * q[2]))
+        sx, sy = _side_camera_xy(yaw)
+        cam_pos = gymapi.Vec3(self._cam_prev_char_pos[0] + sx * CAM_SIDE_DIST,
+                              self._cam_prev_char_pos[1] + sy * CAM_SIDE_DIST,
+                              self._cam_prev_char_pos[2] + CAM_HEIGHT)
         cam_target = gymapi.Vec3(self._cam_prev_char_pos[0],
-                                 self._cam_prev_char_pos[1], 1.0)
+                                 self._cam_prev_char_pos[1],
+                                 self._cam_prev_char_pos[2] + CAM_LOOK_UP)
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
         return
 
     def _update_camera(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         char_root_pos = self._humanoid_root_states[0, 0:3].cpu().numpy()
+        q = self._humanoid_root_states[0, 3:7].cpu().numpy()
+        yaw = np.arctan2(2.0 * (q[3] * q[2] + q[0] * q[1]),
+                         1.0 - 2.0 * (q[1] * q[1] + q[2] * q[2]))
+        sx, sy = _side_camera_xy(yaw)
 
-        cam_trans = self.gym.get_viewer_camera_transform(self.viewer, None)
-        cam_pos = np.array([cam_trans.p.x, cam_trans.p.y, cam_trans.p.z])
-        cam_delta = cam_pos - self._cam_prev_char_pos
-
-        new_cam_target = gymapi.Vec3(char_root_pos[0], char_root_pos[1], 1.0)
-        new_cam_pos = gymapi.Vec3(char_root_pos[0] + cam_delta[0],
-                                  char_root_pos[1] + cam_delta[1], cam_pos[2])
+        new_cam_target = gymapi.Vec3(char_root_pos[0], char_root_pos[1],
+                                     char_root_pos[2] + CAM_LOOK_UP)
+        new_cam_pos = gymapi.Vec3(char_root_pos[0] + sx * CAM_SIDE_DIST,
+                                  char_root_pos[1] + sy * CAM_SIDE_DIST,
+                                  char_root_pos[2] + CAM_HEIGHT)
 
         self.gym.set_camera_location(self.recorder_camera_handle, self.envs[0],
                                      new_cam_pos, new_cam_target)
