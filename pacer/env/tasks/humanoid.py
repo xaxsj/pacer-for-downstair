@@ -1398,37 +1398,53 @@ class Humanoid(BaseTask):
         fx, fy = fx / n, fy / n
         return -fy, fx
 
+    def _path_anchor(self, xy):
+        """Nearest point on the target polyline, its height and left normal.
+
+        The camera is anchored to the *path*, not to the body: it sits on the
+        path's left edge and always looks at the current path position, so the
+        robot walks through a stable side view instead of the frame rotating
+        whenever the torso twists.
+        """
+        pts = getattr(self, "_cam_path", None)
+        if pts is None:
+            return np.asarray(xy, dtype=float), float(xy[2]) if len(xy) > 2 else 0.0, CAM_WORLD_SIDE
+        a, b = pts[:-1, :2], pts[1:, :2]
+        ab = b - a
+        seg = np.linalg.norm(ab, axis=1)
+        keep = seg > 1e-6
+        if not np.any(keep):
+            return np.asarray(xy, dtype=float), 0.0, CAM_WORLD_SIDE
+        a, b, ab, seg = a[keep], b[keep], ab[keep], seg[keep]
+        za, zb = pts[:-1, 2][keep], pts[1:, 2][keep]
+        t = np.clip(((np.asarray(xy)[:2] - a) * ab).sum(axis=1) / (seg ** 2),
+                    0.0, 1.0)
+        proj = a + ab * t[:, None]
+        i = int(np.argmin(np.linalg.norm(np.asarray(xy)[:2] - proj, axis=1)))
+        anchor = proj[i]
+        z = float(za[i] + (zb[i] - za[i]) * t[i])
+        dx, dy = ab[i] / seg[i]
+        return anchor, z, np.array([-dy, dx])
+
     def _init_camera(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self._cam_prev_char_pos = self._humanoid_root_states[
             0, 0:3].cpu().numpy()
         self._static_cam = None
         self._load_cam_path()
-
-        quat = self._humanoid_root_states[0, 3:7].cpu().numpy()
-        sx, sy = self._body_left_dir(quat)
-        cam_pos = gymapi.Vec3(
-            self._cam_prev_char_pos[0] + sx * CAM_SIDE_DIST,
-            self._cam_prev_char_pos[1] + sy * CAM_SIDE_DIST,
-            self._cam_prev_char_pos[2] + CAM_HEIGHT)
-        cam_target = gymapi.Vec3(self._cam_prev_char_pos[0],
-                                 self._cam_prev_char_pos[1],
-                                 self._cam_prev_char_pos[2] + CAM_LOOK_UP)
-        self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
+        self._update_camera()
         return
 
     def _update_camera(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         char_root_pos = self._humanoid_root_states[0, 0:3].cpu().numpy()
-        quat = self._humanoid_root_states[0, 3:7].cpu().numpy()
 
-        sx, sy = self._body_left_dir(quat)
-        new_cam_target = gymapi.Vec3(char_root_pos[0], char_root_pos[1],
-                                     char_root_pos[2] + CAM_LOOK_UP)
-        new_cam_pos = gymapi.Vec3(
-            char_root_pos[0] + sx * CAM_SIDE_DIST,
-            char_root_pos[1] + sy * CAM_SIDE_DIST,
-            char_root_pos[2] + CAM_HEIGHT)
+        anchor, z_path, (sx, sy) = self._path_anchor(char_root_pos)
+        cam_z = max(z_path, char_root_pos[2] - 0.95) + CAM_HEIGHT
+        new_cam_pos = gymapi.Vec3(anchor[0] + sx * CAM_SIDE_DIST,
+                                  anchor[1] + sy * CAM_SIDE_DIST,
+                                  cam_z)
+        new_cam_target = gymapi.Vec3(anchor[0], anchor[1], z_path + CAM_LOOK_UP)
 
         self.gym.set_camera_location(self.recorder_camera_handle, self.envs[0],
                                      new_cam_pos, new_cam_target)

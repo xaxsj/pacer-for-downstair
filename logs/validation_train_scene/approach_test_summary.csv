@@ -1,0 +1,13 @@
+tag,mesh,seed,first_reset,first_contact,first_pen,first_hook,min_clearance,max_pen,max_contact
+approach_test_x0.5,wide_stairs,seed_0,32,1,24,-1,-0.2012,0.2012,1411.32
+approach_test_x0.5,wide_stairs,seed_1,36,1,25,-1,-0.1908,0.1908,11027.78
+approach_test_x0.5,narrow_stairs,seed_0,35,1,24,-1,-0.1964,0.1964,17637.76
+approach_test_x0.5,narrow_stairs,seed_1,32,1,24,-1,-0.1977,0.1977,1446.4
+approach_test_x1.2,wide_stairs,seed_0,58,1,14,-1,-0.1802,0.1802,15982.57
+approach_test_x1.2,wide_stairs,seed_1,35,1,23,-1,-0.2352,0.2352,5308.84
+approach_test_x1.2,narrow_stairs,seed_0,25,1,14,-1,-0.1539,0.1539,2238.21
+approach_test_x1.2,narrow_stairs,seed_1,27,1,12,-1,-0.1513,0.1513,3979.78
+approach_test_x1.8,wide_stairs,seed_0,37,1,31,33,-0.1513,0.1513,10469.93
+approach_test_x1.8,wide_stairs,seed_1,37,1,32,-1,-0.1515,0.1515,1163.47
+approach_test_x1.8,narrow_stairs,seed_0,70,1,46,-1,-0.208,0.208,4322.34
+approach_test_x1.8,narrow_stairs,seed_1,49,1,12,-1,-0.1851,0.1851,6664.11

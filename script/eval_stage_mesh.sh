@@ -15,6 +15,9 @@ FRAMES=${FRAMES:-300}
 CFG_ENV=${CFG_ENV:-pacer/data/cfg/pacer_stage1_stairs.yaml}
 CFG_TRAIN=${CFG_TRAIN:-pacer/data/cfg/train/rlg/amp_humanoid_smpl_sept_stage1.yaml}
 START_XY=${START_XY:-0.5,0.0}
+PATH_FILE=${PATH_FILE:-}
+EXTRA=()
+[ -n "$PATH_FILE" ] && EXTRA+=(--path_file "$PATH_FILE")
 
 OUT="experiment_result/validation/${TAG}/${MESH}/seed_${SEED}"
 mkdir -p "$OUT"
@@ -42,7 +45,7 @@ python pacer/run.py \
   --network_path "$WEIGHTS" \
   --test --num_envs 1 --epoch -1 --no_virtual_display \
   --real_mesh --mesh_name "$MESH" \
-  --start_xy "$START_XY" \
+  --start_xy "$START_XY" "${EXTRA[@]}" \
   --seed "$SEED" \
   --auto_record --record_frames "$FRAMES" \
   >"$OUT/run.log" 2>&1 || true
@@ -53,3 +56,4 @@ after_v=$(ls -t output/renderings/auto-*.mp4 2>/dev/null | head -1 || true)
 [ -n "$after_v" ] && [ "$after_v" != "$before_v" ] && cp -f "$after_v" "$OUT/video.mp4"
 echo "mesh=$MESH states=$(test -f "$OUT/states.pkl" && echo yes || echo no) video=$(test -f "$OUT/video.mp4" && echo yes || echo no)"
 echo STAGE_MESH_DONE
+
