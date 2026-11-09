@@ -113,6 +113,26 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         # normal failure and gets no extra penalty -- that is what to learn.
         self.fall_off_drop = float(cfg["env"].get("fall_off_drop", 1.2))
         self.off_route_penalty = float(cfg["env"].get("off_route_penalty", -5.0))
+        # When the run follows a fixed path file (real-mesh routes), the episode
+        # finishes at the end of that path instead of at a height-defined line.
+        self.goal_radius = float(cfg["env"].get("goal_radius", 0.6))
+        self._goal_xy = None
+        self._goal_path_pts = None
+        _path_file = getattr(flags, "path_file", "") or ""
+        if self.stair_goal_termination and _path_file:
+            try:
+                import json as _json
+                with open(_path_file, "r", encoding="utf-8") as _fh:
+                    _pts = np.asarray(_json.load(_fh)["path"], dtype=float)
+                if _pts.shape[0] >= 2:
+                    self._goal_path_pts = _pts
+                    self._goal_xy = torch.zeros((self.num_envs, 2),
+                                                device=self.device,
+                                                dtype=torch.float32)
+                    print(f"[goal] path-defined finish at {_pts[-1].round(2)} "
+                          f"(radius {self.goal_radius} m)")
+            except Exception as _exc:
+                print(f"[goal] path goal disabled: {_exc}")
         self._episode_goal_x = torch.zeros(self.num_envs, device=self.device)
         self._episode_spawn_z = torch.zeros(self.num_envs, device=self.device)
         self._goal_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -1217,6 +1237,16 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         if self.stair_goal_termination:
             self._episode_goal_x[env_ids] = self._corridor_goal_x(root_pos)
             self._episode_spawn_z[env_ids] = root_pos[:, 2]
+            if self._goal_xy is not None and self._goal_path_pts is not None:
+                first = torch.as_tensor(self._goal_path_pts[0, :2],
+                                        device=self.device,
+                                        dtype=root_pos.dtype)
+                last = torch.as_tensor(self._goal_path_pts[-1, :2],
+                                       device=self.device,
+                                       dtype=root_pos.dtype)
+                # the loader aligns the first waypoint to this env's spawn
+                self._goal_xy[env_ids] = last[None, :] + (root_pos[:, :2]
+                                                          - first[None, :])
             if not getattr(self, "_goal_printed", False) and root_pos.shape[0] > 0:
                 print(f"[goal] env0 spawn=({float(root_pos[0, 0]):.2f},"
                       f"{float(root_pos[0, 1]):.2f}) z={float(root_pos[0, 2]):.2f} "
@@ -1639,7 +1669,15 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
         if self.stair_goal_termination:
             root_xyz = self._humanoid_root_states[:, 0:3]
-            self._goal_buf = root_xyz[:, 0] >= self._episode_goal_x
+            if self._goal_xy is not None:
+                # Path-defined episode: finished when the robot reaches the end
+                # of the planned route. The height rule below cannot express
+                # this, because a route may end higher than it started.
+                dist_goal = torch.linalg.norm(
+                    root_xyz[:, :2] - self._goal_xy, dim=-1)
+                self._goal_buf = dist_goal < self.goal_radius
+            else:
+                self._goal_buf = root_xyz[:, 0] >= self._episode_goal_x
             self._falloff_buf = (root_xyz[:, 2]
                                  < self._episode_spawn_z - self.fall_off_drop)
             if self.success_bonus != 0.0:
