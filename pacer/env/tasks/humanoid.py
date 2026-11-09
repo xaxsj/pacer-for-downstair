@@ -25,17 +25,35 @@ from tqdm import tqdm
 from poselib.poselib.skeleton.skeleton3d import SkeletonTree
 from collections import defaultdict
 
-# Side-on chase camera: the camera sits to the robot's left, perpendicular to
-# its heading, and follows the heading, so the stair profile (risers and treads)
-# is seen in elevation the whole way along the route.
-CAM_SIDE_DIST = 8.5
-CAM_HEIGHT = 0.35
-CAM_LOOK_UP = 0.0
+# Wide side-tracking camera: it follows the robot (so the run is always in
+# frame) but is pulled far to the robot's left, slightly behind and well above,
+# so the whole local flight -- including the down section behind the platform --
+# stays visible instead of being occluded by the steps in front.
+CAM_SIDE_DIST = 9.0
+CAM_WORLD_SIDE = (0.0, 1.0)   # world +y side: the robot's left while walking +x
+CAM_BACK_DIST = 0.0
+CAM_HEIGHT = 1.5
+CAM_LOOK_UP = 0.4
 
 
 def _side_camera_xy(heading_yaw):
     """Unit vector pointing to the robot's left, in world XY."""
     return -np.sin(heading_yaw), np.cos(heading_yaw)
+
+
+def _travel_left_dir(vel_xy, fallback_yaw):
+    """Direction to the left of travel (falls back to body yaw when at rest).
+
+    Using the body yaw alone produced a rear-quarter view whenever the torso
+    was twisted relative to the walking direction, so what the camera faced was
+    not really the side of the stairs.
+    """
+    speed = float(np.linalg.norm(vel_xy))
+    if speed > 0.3:
+        fx, fy = vel_xy[0] / speed, vel_xy[1] / speed
+    else:
+        fx, fy = np.cos(fallback_yaw), np.sin(fallback_yaw)
+    return -fy, fx
 from poselib.poselib.skeleton.skeleton3d import SkeletonMotion, SkeletonState
 from pacer.utils.draw_utils import agt_color
 
@@ -1305,18 +1323,94 @@ class Humanoid(BaseTask):
         pd_tar = self._pd_action_offset + self._pd_action_scale * action
         return pd_tar
 
+    def _framing_camera(self):
+        """Static camera that frames the whole route (or the robot if none)."""
+        path_file = getattr(flags, "path_file", "") or ""
+        pts = None
+        if path_file:
+            try:
+                with open(path_file, "r", encoding="utf-8") as fh:
+                    pts = np.asarray(json.load(fh)["path"], dtype=float)
+            except Exception:
+                pts = None
+        root = self._humanoid_root_states[0, 0:3].cpu().numpy()
+        if pts is None or pts.shape[0] < 2:
+            cam = root + np.array([-9.0, -11.0, 7.0])
+            return cam, root + np.array([0.0, 3.0, 0.8])
+
+        cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+        span = float(max(np.ptp(pts[:, 0]), np.ptp(pts[:, 1])))
+        z_top = float(pts[:, 2].max())
+        # stand off the -x/-y corner so both legs of the L are seen in profile
+        cam = np.array([cx - 0.80 * span - 3.0,
+                        cy - 0.80 * span - 3.0,
+                        z_top + 0.75 * span + 2.0])
+        tgt = np.array([cx, cy, 0.45 * z_top])
+        return cam, tgt
+
+    def _load_cam_path(self):
+        """Cache the target polyline so the camera can face the route sideways."""
+        self._cam_path = None
+        path_file = getattr(flags, "path_file", "") or ""
+        if not path_file:
+            return
+        try:
+            with open(path_file, "r", encoding="utf-8") as fh:
+                pts = np.asarray(json.load(fh)["path"], dtype=float)
+            if pts.shape[0] >= 2:
+                self._cam_path = pts
+        except Exception:
+            self._cam_path = None
+        return
+
+    def _path_side_dir(self, xy):
+        """Left-normal of the route segment nearest to xy (world side offset)."""
+        pts = getattr(self, "_cam_path", None)
+        if pts is None:
+            return CAM_WORLD_SIDE
+        a = pts[:-1, :2]
+        b = pts[1:, :2]
+        ab = b - a
+        seg_len = np.linalg.norm(ab, axis=1)
+        keep = seg_len > 1e-6
+        if not np.any(keep):
+            return CAM_WORLD_SIDE
+        a, ab, seg_len = a[keep], ab[keep], seg_len[keep]
+        t = np.clip(((xy - a) * ab).sum(axis=1) / (seg_len ** 2), 0.0, 1.0)
+        proj = a + ab * t[:, None]
+        dist = np.linalg.norm(xy - proj, axis=1)
+        i = int(np.argmin(dist))
+        dx, dy = ab[i] / seg_len[i]
+        return -dy, dx
+
+    def _body_left_dir(self, quat):
+        """Unit vector pointing to the body's own left, from its +X axis."""
+        x, y, z, w = (float(quat[0]), float(quat[1]), float(quat[2]),
+                      float(quat[3]))
+        # rotate the body +X axis into world space
+        t = 2.0 * np.array([y * 0.0 - z * 0.0, z * 1.0 - x * 0.0, x * 0.0 - y * 1.0])
+        # cross((x,y,z), (1,0,0)) = (0*z - z*0, z*1 - x*0, x*0 - y*1) = (0, z, -y)
+        cross = np.array([0.0, z, -y])
+        t = 2.0 * cross
+        fwd = np.array([1.0, 0.0, 0.0]) + w * t + np.cross(np.array([x, y, z]), t)
+        fx, fy = fwd[0], fwd[1]
+        n = max(np.hypot(fx, fy), 1e-6)
+        fx, fy = fx / n, fy / n
+        return -fy, fx
+
     def _init_camera(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self._cam_prev_char_pos = self._humanoid_root_states[
             0, 0:3].cpu().numpy()
+        self._static_cam = None
+        self._load_cam_path()
 
-        q = self._humanoid_root_states[0, 3:7].cpu().numpy()
-        yaw = np.arctan2(2.0 * (q[3] * q[2] + q[0] * q[1]),
-                         1.0 - 2.0 * (q[1] * q[1] + q[2] * q[2]))
-        sx, sy = _side_camera_xy(yaw)
-        cam_pos = gymapi.Vec3(self._cam_prev_char_pos[0] + sx * CAM_SIDE_DIST,
-                              self._cam_prev_char_pos[1] + sy * CAM_SIDE_DIST,
-                              self._cam_prev_char_pos[2] + CAM_HEIGHT)
+        quat = self._humanoid_root_states[0, 3:7].cpu().numpy()
+        sx, sy = self._body_left_dir(quat)
+        cam_pos = gymapi.Vec3(
+            self._cam_prev_char_pos[0] + sx * CAM_SIDE_DIST,
+            self._cam_prev_char_pos[1] + sy * CAM_SIDE_DIST,
+            self._cam_prev_char_pos[2] + CAM_HEIGHT)
         cam_target = gymapi.Vec3(self._cam_prev_char_pos[0],
                                  self._cam_prev_char_pos[1],
                                  self._cam_prev_char_pos[2] + CAM_LOOK_UP)
@@ -1326,16 +1420,15 @@ class Humanoid(BaseTask):
     def _update_camera(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         char_root_pos = self._humanoid_root_states[0, 0:3].cpu().numpy()
-        q = self._humanoid_root_states[0, 3:7].cpu().numpy()
-        yaw = np.arctan2(2.0 * (q[3] * q[2] + q[0] * q[1]),
-                         1.0 - 2.0 * (q[1] * q[1] + q[2] * q[2]))
-        sx, sy = _side_camera_xy(yaw)
+        quat = self._humanoid_root_states[0, 3:7].cpu().numpy()
 
+        sx, sy = self._body_left_dir(quat)
         new_cam_target = gymapi.Vec3(char_root_pos[0], char_root_pos[1],
                                      char_root_pos[2] + CAM_LOOK_UP)
-        new_cam_pos = gymapi.Vec3(char_root_pos[0] + sx * CAM_SIDE_DIST,
-                                  char_root_pos[1] + sy * CAM_SIDE_DIST,
-                                  char_root_pos[2] + CAM_HEIGHT)
+        new_cam_pos = gymapi.Vec3(
+            char_root_pos[0] + sx * CAM_SIDE_DIST,
+            char_root_pos[1] + sy * CAM_SIDE_DIST,
+            char_root_pos[2] + CAM_HEIGHT)
 
         self.gym.set_camera_location(self.recorder_camera_handle, self.envs[0],
                                      new_cam_pos, new_cam_target)
