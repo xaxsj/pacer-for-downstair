@@ -41,14 +41,14 @@ PIT = -1.5
 SLAB_T = 0.20          # slab thickness for the physics mesh
 
 # ---- storey / stair parameters (stage4 distribution, storey-constrained) -----
-H = 2.4                # storey height
+H = 1.8                # storey height (headroom for a 1.75 m body)
 C = 3.4                # corridor width  (< 4 m, see the design doc)
 OVERLAP = 1.5          # stair <-> floor overlap strip
 
 STAIRS = {
     # name: width, steps, tread, direction (+1/-1 along y), top y, x range
-    "A": dict(w=3.0, n=12, d=0.34, dir=+1, y_top=3.00, x=(0.20, 3.20)),
-    "B": dict(w=2.8, n=11, d=0.36, dir=-1, y_top=8.00, x=(7.60, 10.40)),
+    "A": dict(w=3.0, n=12, d=0.36, dir=+1, y_top=3.00, x=(0.20, 3.20)),
+    "B": dict(w=2.8, n=12, d=0.36, dir=-1, y_top=8.00, x=(7.60, 10.40)),
 }
 for _s in STAIRS.values():
     _s["h"] = H / _s["n"]
@@ -157,23 +157,38 @@ def stair_map(xc, yc, s, z_top, z_bot):
         z = z_top - (i + 1) * h
         m[mask_rect(xc, yc, (xr[0], xr[1], y0, y1))] = z
 
-    # upper overlap (on the upper slab) and lower overlap (on the lower slab)
-    if dr > 0:
-        m[mask_rect(xc, yc, (xr[0], xr[1], y_top - OVERLAP, y_top))] = z_top
-        m[mask_rect(xc, yc, (xr[0], xr[1], y_bot, y_bot + OVERLAP))] = z_bot
-    else:
-        m[mask_rect(xc, yc, (xr[0], xr[1], y_top, y_top + OVERLAP))] = z_top
-        m[mask_rect(xc, yc, (xr[0], xr[1], y_bot - OVERLAP, y_bot))] = z_bot
+    # No outward extension: each sheet is a pure physical surface and the
+    # height query resolves per cell, so nothing needs to be duplicated onto
+    # the neighbouring floor.
     return m
 
 
 # ---------------------------------------------------------------------------
 # A* on one block
 # ---------------------------------------------------------------------------
-def astar(hmap, xc, yc, start_xy, goal_xy, max_climb=0.28):
+def astar(hmap, xc, yc, start_xy, goal_xy, max_climb=0.28, clearance=0.35):
+    """2D A* on one block, kept `clearance` metres away from any drop.
+
+    Without the clearance band the route hugs the corridor edge and cuts the
+    corner at the landing: the controller follows it, drifts within ~0.2 m of
+    the pit and falls.  Eroding the walkable mask is the cheap equivalent of a
+    clearance cost and keeps the whole route inside a safe corridor.
+    """
     import heapq
     nx, ny = hmap.shape
     walk = hmap > PIT + 0.1
+    if clearance > 0:
+        try:
+            from scipy.ndimage import distance_transform_edt
+            dist_m = distance_transform_edt(walk) * RES
+            eroded = walk & (dist_m > clearance)
+            # keep at least a thin band everywhere so a narrow flight still works
+            if eroded.sum() > 0.5 * walk.sum():
+                walk = eroded
+            else:
+                print("  ! clearance %.2f m too wide, using the raw mask" % clearance)
+        except Exception as e:
+            print("  ! no distance transform (%s), raw mask" % e)
 
     def idx(xy):
         return (int(np.clip(round((xy[0] - xc[0]) / RES), 0, nx - 1)),
@@ -271,12 +286,32 @@ def main():
             (A["x"][0], A["x"][1], A["y_bot"], A["y_top"])
     holeB = (B["x"][0], B["x"][1], min(B["y_top"], B["y_bot"]), max(B["y_top"], B["y_bot"]))
 
+    stairA_map = stair_map(xc, yc, A, 2 * H, H)
+    stairB_map = stair_map(xc, yc, B, H, 0.0)
+
+    def overlay(m, tread, s):
+        """Put a staircase's treads into a floor block's map.
+
+        A level's own map must show the flights attached to it, otherwise the
+        approach to a stairwell reads as a pit and the controller refuses to
+        step over the edge: it would have to stand on the stairs before it can
+        see them.  With the treads in the level map the descent is visible from
+        the landing, which is also how a real stairwell looks.
+        """
+        hole = (s["x"][0], s["x"][1],
+                min(s["y_top"], s["y_bot"]), max(s["y_top"], s["y_bot"]))
+        m[mask_rect(xc, yc, hole)] = tread[mask_rect(xc, yc, hole)]
+        return m
+
+    # Pure surfaces: the slabs (with their holes) and the two flights.  The
+    # query "highest sheet not above foot + rise_tol" picks the right one per
+    # cell, so no sheet needs to describe another sheet's geometry.
     maps = {
         "floor_1F": block_map(xc, yc, 0.0),
         "floor_2F": block_map(xc, yc, H, hole_rects=[holeB]),
         "floor_3F": block_map(xc, yc, 2 * H, hole_rects=[holeA]),
-        "stair_A": stair_map(xc, yc, A, 2 * H, H),
-        "stair_B": stair_map(xc, yc, B, H, 0.0),
+        "stair_A": stairA_map,
+        "stair_B": stairB_map,
     }
     order = ["floor_3F", "stair_A", "floor_2F", "stair_B", "floor_1F"]
     for nm in order:
@@ -295,15 +330,30 @@ def main():
     legs = [(START, portals[0]), (portals[0], portals[1]),
             (portals[1], portals[2]), (portals[2], portals[3]),
             (portals[3], GOAL)]
-    path = []
+    seg_pts = []
     for nm, (p0, p1) in zip(order, legs):
         pts, length = astar(maps[nm], xc, yc, p0, p1)
         print("  A* %-9s %-16s -> %-16s  %5.2f m  %d pts"
               % (nm, "(%.2f,%.2f)" % p0, "(%.2f,%.2f)" % p1, length, len(pts)))
-        if path:
-            pts = pts[1:]
-        path.append(pts)
+        seg_pts.append(pts)
+
+    path = []
+    for i, pts in enumerate(seg_pts):
+        path.append(pts[1:] if i else pts)
     path = np.concatenate(path, axis=0)
+
+    # Per-block sub-paths: the controller re-anchors the trajectory to the
+    # current block's sub-path when the block changes, instead of following one
+    # long concatenated polyline.  Every block shares the same world frame, so
+    # switching needs no coordinate transform.  Each entry carries a ~2 m tail
+    # of the next block so the lookahead does not collapse at the portal.
+    block_paths = []
+    for i, pts in enumerate(seg_pts):
+        if i + 1 < len(seg_pts):
+            tail = seg_pts[i + 1][1:3]
+            block_paths.append(np.vstack([pts, tail]) if len(tail) else pts)
+        else:
+            block_paths.append(pts)
     seg = np.linalg.norm(np.diff(path[:, :2], axis=0), axis=1)
     print("total route %.2f m, %d waypoints" % (seg.sum(), len(path)))
 
@@ -338,30 +388,31 @@ def main():
         vals = " ".join("%s=%.2f" % (b, maps[b][ix, iy]) for b in blocks)
         print("   %-12s (%5.2f,%5.2f)  %s" % (label, px, py, vals))
 
-    # overlap check: in every overlap strip the two blocks must agree
-    print("overlap agreement:")
-    for (nm_a, nm_b, y0, y1, xr) in [
-            ("floor_3F", "stair_A", A["y_top"] - OVERLAP, A["y_top"], A["x"]),
-            ("floor_2F", "stair_A", A["y_bot"], A["y_bot"] + OVERLAP, A["x"]),
-            ("floor_2F", "stair_B", B["y_top"], B["y_top"] + OVERLAP, B["x"]),
-            ("floor_1F", "stair_B", B["y_bot"] - OVERLAP, B["y_bot"], B["x"])]:
-        xs = np.arange(xr[0] + 0.1, xr[1] - 0.05, 0.2)
-        ys = np.arange(y0 + 0.1, y1 - 0.05, 0.2)
-        if len(xs) == 0 or len(ys) == 0:
-            print("   %s <-> %s : EMPTY STRIP" % (nm_a, nm_b))
+    # query check: highest sheet not above foot + rise_tol, per probe point
+    print("surface query check (foot -> expected):")
+    RISE = 0.35
+    _hA = A["h"]                       # riser of flight A
+    probes = [
+        ("3F slab",       (1.70, 1.20), 2 * H,                 2 * H),
+        ("A 1st tread",   (1.70, 3.20), 2 * H - _hA,           2 * H - _hA),
+        ("A mid",         (1.70, 5.04), stairA_map[int((5.04 - yc[0]) / RES),
+                                                   int((1.70 - xc[0]) / RES)] if False else 2 * H - 6 * _hA, 2 * H - 6 * _hA),
+        ("2F slab",       (1.70, 7.38), H,                     H),
+        ("1F under 2F",   (1.70, 7.38), 0.0,                   0.0),
+        ("1F goal",       (9.00, 1.20), 0.0,                   0.0),
+        ("3F sees stairs",(1.70, 5.04), 2 * H,                 2 * H - 6 * _hA),
+    ]
+    for label, (px, py), foot, exp in probes:
+        ix = int((px - xc[0]) / RES)
+        iy = int((py - yc[0]) / RES)
+        vals = [float(maps[n][ix, iy]) for n in order]
+        usable = [v for v in vals if v <= foot + RISE]
+        got = max(usable) if usable else PIT
+        flag = "OK" if abs(got - exp) < 0.01 else "!!"
+        if flag == "!!":
             ok = False
-            continue
-        dmax = 0.0
-        for px in xs:
-            for py in ys:
-                ix = int((px - xc[0]) / RES)
-                iy = int((py - yc[0]) / RES)
-                dmax = max(dmax, abs(float(maps[nm_a][ix, iy]) - float(maps[nm_b][ix, iy])))
-        flag = "OK" if dmax < 1e-6 else "MISMATCH"
-        if dmax >= 1e-6:
-            ok = False
-        print("   %-9s <-> %-8s  max |dh| = %.3f  %s" % (nm_a, nm_b, dmax, flag))
-
+        print("   %-13s (%5.2f,%5.2f) foot %5.2f -> %5.2f  expect %5.2f  %s"
+              % (label, px, py, foot, got, exp, flag))
     # ---- write -------------------------------------------------------------
     os.makedirs("data/mesh", exist_ok=True)
     os.makedirs("data/paths", exist_ok=True)
@@ -374,6 +425,11 @@ def main():
         heigthmap=stack, walkable_map=walk,
         cam_pos=cam, x_scale=1.0 / RES, y_scale=1.0 / RES,
         start_block=order.index("floor_3F"),
+        start_yaw=1.5707963267948966,   # route starts along +y
+        start_z=2 * H,                  # spawn reference surface (3F)
+        rise_tol=0.35,                  # a surface above foot + 0.35 is not walkable
+        block_paths=[[[float(p[0]), float(p[1]), float(p[2])] for p in bp]
+                     for bp in block_paths],
         blocks=[dict(id=i, name=n, kind=("stair" if n.startswith("stair") else "floor"),
                      z=float(np.median(maps[n][maps[n] > PIT + 0.1])))
                 for i, n in enumerate(order)],
